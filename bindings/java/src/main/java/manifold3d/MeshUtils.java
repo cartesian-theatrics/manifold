@@ -48,6 +48,43 @@ public class MeshUtils extends Pointer {
 
     public static native @ByVal Manifold ColorVertices(@Const @ByRef Manifold manifold, @Const @ByRef DoubleVec4 rgba);
     public static native @ByVal Manifold ColorVertices(@Const @ByRef Manifold manifold, @Const @ByRef DoubleVec4 rgba, long propIndex);
+    public static native @ByVal Manifold ApplyPlanarUV(
+        @Const @ByRef Manifold manifold,
+        @Cast("std::size_t") long propIndex,
+        int axisU,
+        int axisV,
+        double scaleU,
+        double scaleV,
+        double offsetU,
+        double offsetV);
+    public static native @ByVal Manifold UnwrapUV(
+        @Const @ByRef Manifold manifold,
+        @Cast("std::size_t") long propIndex,
+        double seamAngleDegrees,
+        double scale,
+        double padding,
+        boolean pack);
+    public static native @ByVal Manifold GeodesicUV(
+        @Const @ByRef Manifold manifold,
+        @Cast("std::size_t") long propIndex,
+        double originX,
+        double originY,
+        double originZ,
+        double normalX,
+        double normalY,
+        double normalZ,
+        double uDirectionX,
+        double uDirectionY,
+        double uDirectionZ,
+        double sizeU,
+        double sizeV,
+        double atlasU,
+        double atlasV,
+        double atlasWidth,
+        double atlasHeight,
+        double outsideU,
+        double outsideV,
+        double pixelSize);
     public static native @ByVal Manifold CreateSurface(@Const FloatPointer heightMap, int numProps, int width, int height);
     public static native @ByVal Manifold CreateSurface(@Const FloatPointer heightMap, int numProps, int width, int height, double pixelWidth);
     public static native @ByVal Manifold CreateSurface(@Const @StdString String filename);

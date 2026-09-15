@@ -39,6 +39,12 @@ public class DoubleMat2x3 extends DoublePointer implements Iterable<DoubleVec2> 
     public DoubleMat2x3() { allocate(); }
     private native void allocate();
 
+    public static DoubleMat2x3 IdentityMat() {
+        return new DoubleMat2x3(new DoubleVec2(1.0, 0.0),
+                                new DoubleVec2(0.0, 1.0),
+                                new DoubleVec2(0.0, 0.0));
+    }
+
     public DoubleMat2x3(double x) { allocate(x); }
     private native void allocate(double x);
 
@@ -49,9 +55,10 @@ public class DoubleMat2x3 extends DoublePointer implements Iterable<DoubleVec2> 
 
     public DoubleMat2x3(double c0, double c1, double c2,
                         double c3, double c4, double c5) {
-        allocate(c0, c1, c2, c3, c4, c5);
+        allocate(new DoubleVec2(c0, c1),
+                 new DoubleVec2(c2, c3),
+                 new DoubleVec2(c4, c5));
     }
-    public native void allocate(double c1, double c2, double c3, double c4, double c5, double c6);
 
     @Name("operator[]") public native @ByRef DoubleVec2 getColumn(int i);
 

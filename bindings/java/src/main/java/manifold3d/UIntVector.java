@@ -1,6 +1,7 @@
 package manifold3d;
 
 import java.nio.IntBuffer;
+import java.nio.LongBuffer;
 import manifold3d.BufferUtils;
 
 import org.bytedeco.javacpp.*;
@@ -14,14 +15,22 @@ public class UIntVector extends Pointer {
     public UIntVector(Pointer p) { super(p); }
     public UIntVector() { allocate(); }
 
-    // public static UIntVector FromArray(long[] longArray) {
-    //     UIntPointer longPtr = new UIntPointer(longArray);
-    //     return BufferUtils.longVectorFromPointer(longPtr, longArray.length);
-    // }
-    // public static UIntVector FromBuffer(LongBuffer longBuffer) {
-    //     UIntPointer longPtr = new UIntPointer(longBuffer);
-    //     return new UIntVector(longPtr);
-    // }
+    public static UIntVector FromArray(long[] values) {
+        UIntVector result = new UIntVector();
+        for (long value : values) {
+            result.pushBack((int) value);
+        }
+        return result;
+    }
+
+    public static UIntVector FromBuffer(LongBuffer values) {
+        UIntVector result = new UIntVector();
+        LongBuffer copy = values.duplicate();
+        while (copy.hasRemaining()) {
+            result.pushBack((int) copy.get());
+        }
+        return result;
+    }
 
     private native void allocate();
 

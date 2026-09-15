@@ -95,6 +95,8 @@ public class Manifold extends Pointer {
     @Name("NumProp") public native int numProp();
     @Name("NumPropVert") public native int numPropVert();
     @Name("BoundingBox") public native @ByVal Box boundingBox();
+    @Name("SurfaceArea") public native double surfaceArea();
+    @Name("Volume") public native double volume();
     //@Name("Precision") public native float precision();
     @Name("Genus") public native int genus();
     @Name("CalculateCurvature") public native @ByVal Manifold calculateCurvature(int gaussianIdx, int meanIdx);
