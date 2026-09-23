@@ -1,0 +1,98 @@
+name: Publish Clojure library
+
+on:
+  workflow_dispatch:
+    inputs:
+      tested_run:
+        description: Successful Library release checks run ID from clj-manifold3d main
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: clj-library-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Fetch successful library release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_RUN: ${{ inputs.tested_run }}
+        run: |
+          [[ "$TESTED_RUN" =~ ^[0-9]+$ ]]
+          gh api "repos/cartesian-theatrics/clj-manifold3d/actions/runs/$TESTED_RUN" > tested-run.json
+          python3 - <<'PY'
+          import json
+          run = json.load(open('tested-run.json'))
+          assert run['conclusion'] == 'success' and run['status'] == 'completed', 'Tests must pass first'
+          assert run['head_branch'] == 'main' and run['event'] in ('push', 'workflow_dispatch')
+          assert run['path'] == '.github/workflows/test.yaml'
+          assert run['head_repository']['full_name'] == 'cartesian-theatrics/clj-manifold3d'
+          PY
+          gh run download "$TESTED_RUN" --repo cartesian-theatrics/clj-manifold3d \
+            --name clj-manifold3d-release --dir release-jars
+      - name: Verify release scope and tested revision
+        id: version
+        run: |
+          python3 - <<'PY'
+          import json, os, re, zipfile
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          artifacts = Path('release-jars')
+          poms = list(artifacts.glob('*.pom'))
+          assert len(poms) == 1
+          pom = ET.parse(poms[0])
+          ns = {'m': 'http://maven.apache.org/POM/4.0.0'}
+          assert pom.findtext('m:groupId', namespaces=ns) == 'org.clojars.cartesiantheatrics'
+          assert pom.findtext('m:artifactId', namespaces=ns) == 'clj-manifold3d'
+          version = pom.findtext('m:version', namespaces=ns)
+          assert re.fullmatch(r'\d+\.\d+\.\d+', version)
+          deps = {(d.findtext('m:groupId', namespaces=ns), d.findtext('m:artifactId', namespaces=ns)) for d in pom.findall('m:dependencies/m:dependency', ns)}
+          assert deps == {('org.clojure', 'clojure'), ('org.clojure', 'data.json')}
+          with zipfile.ZipFile(artifacts / f'clj-manifold3d-{version}.jar') as jar:
+              assert not any('journal' in n or 'try_it' in n for n in jar.namelist())
+              assert jar.read('META-INF/maven/org.clojars.cartesiantheatrics/clj-manifold3d/pom.xml') == poms[0].read_bytes()
+              revision = json.load(open('tested-run.json'))['head_sha']
+              assert f'SCM-Revision: {revision}' in jar.read('META-INF/MANIFEST.MF').decode()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version={version}\n')
+          PY
+      - name: Publish tested library to Clojars
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CLOJARS_PASSPHRASE: ${{ secrets.CLOJARS_PASSPHRASE }}
+          CLOJARS_TOKEN: ${{ secrets.CLOJARS_TOKEN }}
+        run: |
+          test -n "$CLOJARS_TOKEN"
+          mvn -B org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file \
+            -DpomFile="release-jars/clj-manifold3d-$VERSION.pom" \
+            -Dfile="release-jars/clj-manifold3d-$VERSION.jar" \
+            -DrepositoryId=clojars -Durl=https://clojars.org/repo \
+            --settings=bindings/java/settings.xml
+      - name: Verify published bytes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TESTED_RUN: ${{ inputs.tested_run }}
+        run: |
+          mkdir downloaded
+          for extension in jar pom; do
+            name="clj-manifold3d-$VERSION.$extension"
+            curl --fail --silent --show-error --retry 8 --retry-all-errors --retry-delay 5 \
+              "https://repo.clojars.org/org/clojars/cartesiantheatrics/clj-manifold3d/$VERSION/$name" \
+              -o "downloaded/$name"
+            cmp "release-jars/$name" "downloaded/$name"
+          done
+          echo "Published clj-manifold3d $VERSION from tested wrapper run $TESTED_RUN. Journal excluded; published bytes verified." >> "$GITHUB_STEP_SUMMARY"
