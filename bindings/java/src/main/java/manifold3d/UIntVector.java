@@ -50,6 +50,7 @@ public class UIntVector extends Pointer {
         // Allocate an array of the appropriate size
         int size = (int) size();
         int[] result = new int[size];
+        if (size == 0) return result;
         IntPointer ptr = data();
         ptr.get(result);
         return result;

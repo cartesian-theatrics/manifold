@@ -49,20 +49,24 @@ Module.setup = function() {
         poly.push(f(v.get(j)));
       }
       result.push(poly);
+      v.delete();
     }
     return result;
   }
 
   function polygons2vec(polygons) {
-    if (polygons[0].length < 3) {
+    if (polygons.length && polygons[0].length < 3) {
       polygons = [polygons];
     }
-    return toVec(
-        new Module.Vector2_vec2(), polygons,
-        poly => toVec(new Module.Vector_vec2(), poly, p => {
+    const result = new Module.Vector2_vec2();
+    for (const poly of polygons) {
+      const points = toVec(new Module.Vector_vec2(), poly, p => {
           if (p instanceof Array) return {x: p[0], y: p[1]};
           return p;
-        }));
+        });
+      try { result.push_back(points); } finally { points.delete(); }
+    }
+    return result;
   }
 
   function disposePolygons(polygonsVec) {
@@ -138,9 +142,8 @@ Module.setup = function() {
       setValue(vec2Ptr, vert[0], 'double');
       setValue(vec2Ptr + 8, vert[1], 'double');
     }, 'vi');
-    const out = this._Warp(wasmFuncPtr);
-    removeFunction(wasmFuncPtr);
-    return out;
+    try { return this._Warp(wasmFuncPtr); }
+    finally { removeFunction(wasmFuncPtr); }
   };
 
   Module.CrossSection.prototype.decompose = function() {
@@ -168,15 +171,20 @@ Module.setup = function() {
       height, nDivisions = 0, twistDegrees = 0.0, scaleTop = [1.0, 1.0],
       center = false) {
     scaleTop = vararg2vec2([scaleTop]);
-    const man = Module._Extrude(
-        this._ToPolygons(), height, nDivisions, twistDegrees, scaleTop);
-    return (center ? man.translate([0., 0., -height / 2.]) : man);
+    const polygons = this._ToPolygons();
+    try {
+      const man = Module._Extrude(polygons, height, nDivisions, twistDegrees, scaleTop);
+      if (!center) return man;
+      try { return man.translate([0., 0., -height / 2.]); }
+      finally { man.delete(); }
+    } finally { polygons.delete(); }
   };
 
   Module.CrossSection.prototype.revolve = function(
       circularSegments = 0, revolveDegrees = 360.0) {
-    return Module._Revolve(
-        this._ToPolygons(), circularSegments, revolveDegrees);
+    const polygons = this._ToPolygons();
+    try { return Module._Revolve(polygons, circularSegments, revolveDegrees); }
+    finally { polygons.delete(); }
   };
 
   Module.CrossSection.prototype.add = function(other) {
@@ -216,11 +224,13 @@ Module.setup = function() {
       setValue(vec3Ptr + 8, vert[1], 'double');
       setValue(vec3Ptr + 16, vert[2], 'double');
     }, 'vi');
-    const out = this._Warp(wasmFuncPtr);
-    removeFunction(wasmFuncPtr);
+    let out;
+    try { out = this._Warp(wasmFuncPtr); }
+    finally { removeFunction(wasmFuncPtr); }
 
     const status = out.status();
     if (status.value !== 0) {
+      out.delete();
       throw new Module.ManifoldError(status.value);
     }
     return out;
@@ -253,9 +263,8 @@ Module.setup = function() {
         setValue(newPtr + 8 * i, newProp[i], 'double');
       }
     }, 'viii');
-    const out = this._SetProperties(numProp, wasmFuncPtr);
-    removeFunction(wasmFuncPtr);
-    return out;
+    try { return this._SetProperties(numProp, wasmFuncPtr); }
+    finally { removeFunction(wasmFuncPtr); }
   };
 
   Module.Manifold.prototype.translate = function(...vec) {
@@ -551,6 +560,7 @@ Module.setup = function() {
 
     const status = manifold.status();
     if (status.value !== 0) {
+      manifold.delete();
       throw new Module.ManifoldError(status.value);
     }
 

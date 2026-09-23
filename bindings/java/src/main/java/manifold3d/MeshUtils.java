@@ -57,6 +57,10 @@ public class MeshUtils extends Pointer {
         double scaleV,
         double offsetU,
         double offsetV);
+    public static native @ByVal Manifold ApplyBoxUV(
+        @Const @ByRef Manifold manifold, @Cast("std::size_t") long propIndex,
+        double originX, double originY, double originZ, double sizeU, double sizeV,
+        double scaleU, double scaleV, double offsetU, double offsetV);
     public static native @ByVal Manifold UnwrapUV(
         @Const @ByRef Manifold manifold,
         @Cast("std::size_t") long propIndex,
@@ -85,6 +89,30 @@ public class MeshUtils extends Pointer {
         double outsideU,
         double outsideV,
         double pixelSize);
+    /** Signed row-major depth samples, bilinearly sampled in local image UVs. */
+    public static native @ByVal Manifold GeodesicUVDepth(
+        @Const @ByRef Manifold manifold,
+        @Cast("std::size_t") long propIndex,
+        double originX, double originY, double originZ,
+        double normalX, double normalY, double normalZ,
+        double uDirectionX, double uDirectionY, double uDirectionZ,
+        double sizeU, double sizeV,
+        double atlasU, double atlasV, double atlasWidth, double atlasHeight,
+        double outsideU, double outsideV, double pixelSize,
+        @StdVector double[] depth, int width, int height,
+        double depthScale, double depthOffset, double depthFade, boolean stepBoundary);
+    /** Decode an 8/16-bit grayscale depth image and displace entirely in C++. */
+    public static native @ByVal Manifold GeodesicUVDepthImage(
+        @Const @ByRef Manifold manifold,
+        @Cast("std::size_t") long propIndex,
+        double originX, double originY, double originZ,
+        double normalX, double normalY, double normalZ,
+        double uDirectionX, double uDirectionY, double uDirectionZ,
+        double sizeU, double sizeV,
+        double atlasU, double atlasV, double atlasWidth, double atlasHeight,
+        double outsideU, double outsideV, double pixelSize,
+        @Const @StdString String filename,
+        double depthScale, double depthOffset, double depthFade, boolean stepBoundary);
     public static native @ByVal Manifold CreateSurface(@Const FloatPointer heightMap, int numProps, int width, int height);
     public static native @ByVal Manifold CreateSurface(@Const FloatPointer heightMap, int numProps, int width, int height, double pixelWidth);
     public static native @ByVal Manifold CreateSurface(@Const @StdString String filename);

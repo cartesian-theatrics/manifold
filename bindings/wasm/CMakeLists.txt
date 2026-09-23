@@ -12,7 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_executable(manifoldjs bindings.cpp)
+add_executable(manifoldjs bindings.cpp mesh_utils.cpp)
+target_include_directories(manifoldjs PRIVATE
+  ${PROJECT_SOURCE_DIR}/bindings/java/src/main/cpp/manifold3d
+  ${PROJECT_SOURCE_DIR}/include/manifold)
+# Keep the generated loader external to Closure; expose both browser globals
+# and CommonJS consumers from the same artifact.
+option(MANIFOLD_JS_ESM "Emit an ES module loader" ON)
+target_compile_options(manifoldjs PRIVATE -fexceptions)
 
 set_source_files_properties(
   bindings.cpp
@@ -29,10 +36,15 @@ target_link_options(
     --pre-js
     ${CMAKE_CURRENT_SOURCE_DIR}/bindings.js
     --bind
+    --no-entry
     -sALLOW_TABLE_GROWTH=1
-    -sEXPORTED_RUNTIME_METHODS=addFunction,removeFunction
+    -sEXPORTED_RUNTIME_METHODS=addFunction,removeFunction,FS
     -sMODULARIZE=1
-    -sEXPORT_ES6=1
+    -sEXPORT_ES6=$<BOOL:${MANIFOLD_JS_ESM}>
+    -sEXPORT_NAME=ManifoldModule
+    -fexceptions
+    -sDISABLE_EXCEPTION_CATCHING=0
+    -sSTACK_SIZE=8MB
 )
 
 set_target_properties(manifoldjs PROPERTIES OUTPUT_NAME "manifold")

@@ -133,6 +133,25 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(TextToPolygon)
 
+# The pinned dependency uses GCC-only floating-point `d` suffixes. Generate
+# a portable translation unit without modifying downloaded source trees.
+if(EMSCRIPTEN)
+  set(TEXT_POLYGON_SOURCE "${texttopolygon_SOURCE_DIR}/src/text_to_polygon.cpp")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${TEXT_POLYGON_SOURCE}")
+  file(READ "${TEXT_POLYGON_SOURCE}" TEXT_POLYGON_CODE)
+  string(REGEX REPLACE "([0-9]+\\.[0-9]+)d" "\\1" TEXT_POLYGON_CODE "${TEXT_POLYGON_CODE}")
+  string(REPLACE "u_int32_t" "uint32_t" TEXT_POLYGON_CODE "${TEXT_POLYGON_CODE}")
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/text_to_polygon_portable.cpp" "${TEXT_POLYGON_CODE}")
+  file(READ "${texttopolygon_SOURCE_DIR}/include/text_to_polygon.h" TEXT_POLYGON_HEADER)
+  string(REPLACE "u_int32_t" "uint32_t" TEXT_POLYGON_HEADER "${TEXT_POLYGON_HEADER}")
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/text_to_polygon.h" "${TEXT_POLYGON_HEADER}")
+  target_include_directories(TextToPolygon BEFORE PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
+  # This library also ships an example main(); it must not run on WASM startup.
+  target_compile_definitions(TextToPolygon PRIVATE main=TextToPolygonExampleMain)
+  set_property(TARGET TextToPolygon PROPERTY SOURCES
+    "${CMAKE_CURRENT_BINARY_DIR}/text_to_polygon_portable.cpp")
+endif()
+
 target_link_libraries(TextToPolygon
     PRIVATE
     freetype

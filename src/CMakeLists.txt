@@ -66,6 +66,7 @@ target_link_libraries(
     # optional dependencies
     $<$<BOOL:${MANIFOLD_PAR}>:TBB::tbb>
     $<$<BOOL:${MANIFOLD_CROSS_SECTION}>:Clipper2::Clipper2>
+    $<$<BOOL:${MANIFOLD_CROSS_SECTION}>:TextToPolygon>
     $<$<BOOL:${MANIFOLD_EXPORT}>:assimp::assimp>
 )
 

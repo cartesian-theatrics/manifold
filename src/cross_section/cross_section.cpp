@@ -309,7 +309,7 @@ std::shared_ptr<const PathImpl> CrossSection::GetPaths() const {
  * @param pixelHeight freetype pixelHeight.
  * @param interpRes Resolution of interpolation of curves.
  */
-CrossSection CrossSection::Text(const std::string& fontFile, const std::string& text, u_int32_t pixelHeight, int interpRes, FillRule fillRule) {
+CrossSection CrossSection::Text(const std::string& fontFile, const std::string& text, uint32_t pixelHeight, int interpRes, FillRule fillRule) {
   Polygons polys = TextToPolygon::textToPolygons(fontFile, text, pixelHeight, interpRes);
   return CrossSection(polys, fillRule);
 }

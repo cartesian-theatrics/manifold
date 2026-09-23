@@ -12,6 +12,11 @@ import manifold3d.FloatVector;
 public class MeshGL extends Pointer {
     static { Loader.load(); }
 
+    public MeshGL() { allocate(); }
+    private native void allocate();
+    public MeshGL(@Const @ByRef MeshGL other) { allocate(other); }
+    private native void allocate(@Const @ByRef MeshGL other);
+
     public native @Cast("uint32_t") int NumVert();
     public native @Cast("uint32_t") int NumTri();
 

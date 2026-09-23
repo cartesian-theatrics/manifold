@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <memory>
 #include <queue>
 #include <stdexcept>
 #include <string>
@@ -271,7 +272,7 @@ manifold::Manifold PlyToSurface(const std::string &filepath, double cellSize, do
 
     // Initialize vertProperties to store the flattened vertex data
     std::vector<float> vertProperties;
-    vertProperties.reserve(grid_resolution_x * grid_resolution_y * nProp);  // Reserve space for z, r, g, b per cell
+    vertProperties.resize(grid_resolution_x * grid_resolution_y * nProp);  // Indexed writes require constructed elements.
 
     // Compute the average height and color for each grid cell and populate vertProperties
     for (int i = 0; i < grid_resolution_x; ++i) {
@@ -382,6 +383,83 @@ manifold::Manifold ApplyPlanarUV(const manifold::Manifold& man,
     mesh.numProp = newNumProps;
     mesh.vertProperties = std::move(newVertProps);
     return manifold::Manifold(mesh);
+}
+
+/** Whole-surface box projection. Each triangle uses its dominant normal axis,
+ * so no nondegenerate face is viewed edge-on. Only property vertices split:
+ * physical connectivity, earlier UV/color channels and provenance are retained.
+ * Coordinates are object-space tile coordinates, not a render-time shader. */
+manifold::Manifold ApplyBoxUV(const manifold::Manifold& man, size_t propIndex,
+                              double originX, double originY, double originZ,
+                              double sizeU, double sizeV,
+                              double scaleU, double scaleV,
+                              double offsetU, double offsetV) {
+    if (propIndex < 3 || propIndex > size_t(std::numeric_limits<int>::max()-2))
+        throw std::invalid_argument("UV property index must be at least 3 and fit an int");
+    for (double v : {originX,originY,originZ,sizeU,sizeV,scaleU,scaleV,offsetU,offsetV})
+        if (!std::isfinite(v)) throw std::invalid_argument("Box UV parameters must be finite");
+    if (sizeU <= 0 || sizeV <= 0 || scaleU == 0 || scaleV == 0)
+        throw std::invalid_argument("Box UV requires positive tile size and nonzero scale");
+    if (man.IsEmpty()) return man;
+    const auto mesh = man.GetMeshGL64();
+    auto output = mesh;
+    output.numProp = std::max(size_t(mesh.numProp), propIndex+2);
+    output.vertProperties.clear(); output.triVerts.clear();
+    output.mergeFromVert.clear(); output.mergeToVert.clear();
+    output.triVerts.reserve(mesh.triVerts.size());
+    std::vector<uint64_t> parent(mesh.NumVert()), first(mesh.NumVert(), UINT64_MAX);
+    for (size_t i=0; i<parent.size(); ++i) parent[i]=i;
+    auto root = [&](uint64_t i) {
+        while (parent[i]!=i) { parent[i]=parent[parent[i]]; i=parent[i]; }
+        return i;
+    };
+    for (size_t i=0; i<mesh.mergeFromVert.size(); ++i)
+        parent[root(mesh.mergeFromVert[i])]=root(mesh.mergeToVert[i]);
+    std::unordered_map<uint64_t,uint64_t> rows;
+    rows.reserve(mesh.NumVert());
+    const vec3 origin{originX,originY,originZ};
+    auto position = [&](uint64_t v) {
+        const auto p=&mesh.vertProperties[v*mesh.numProp];
+        return vec3{p[0],p[1],p[2]};
+    };
+    for (size_t face=0; face<mesh.NumTri(); ++face) {
+        const auto a=position(mesh.triVerts[3*face]);
+        auto e1=position(mesh.triVerts[3*face+1])-a, e2=position(mesh.triVerts[3*face+2])-a;
+        double extent=0;
+        for (int j=0;j<3;++j) extent=std::max({extent,std::abs(e1[j]),std::abs(e2[j])});
+        if (extent==0) throw std::invalid_argument("Box UV requires nondegenerate triangles");
+        const auto normal=linalg::cross(e1/extent,e2/extent);
+        int axis=0;
+        for (int j=1;j<3;++j) if (std::abs(normal[j])>std::abs(normal[axis])) axis=j;
+        if (normal[axis]==0) throw std::invalid_argument("Box UV requires nondegenerate triangles");
+        const int sign=normal[axis]<0 ? -1 : 1;
+        const int chart=2*axis+(sign<0), uAxis=axis==0 ? 1 : 0, vAxis=axis==2 ? 1 : 2;
+        const double uSign=axis==1 ? -sign : sign;
+        for (int c=0;c<3;++c) {
+            const uint64_t source=mesh.triVerts[3*face+c], key=6*source+chart;
+            auto found=rows.find(key);
+            uint64_t vertex;
+            if (found!=rows.end()) vertex=found->second;
+            else {
+                vertex=output.NumVert(); rows.emplace(key,vertex);
+                const size_t at=output.vertProperties.size();
+                output.vertProperties.resize(at+output.numProp,0);
+                std::copy_n(&mesh.vertProperties[source*mesh.numProp],mesh.numProp,&output.vertProperties[at]);
+                const vec3 p=position(source)-origin;
+                const double u=uSign*p[uAxis]/sizeU*scaleU+offsetU, v=p[vAxis]/sizeV*scaleV+offsetV;
+                if (!std::isfinite(u) || !std::isfinite(v)) throw std::invalid_argument("Box UV coordinates overflow");
+                output.vertProperties[at+propIndex]=u; output.vertProperties[at+propIndex+1]=v;
+                const auto logical=root(source);
+                if (first[logical]==UINT64_MAX) first[logical]=vertex;
+                else { output.mergeFromVert.push_back(vertex); output.mergeToVert.push_back(first[logical]); }
+            }
+            output.triVerts.push_back(vertex);
+        }
+    }
+    manifold::Manifold result(output);
+    if (result.Status()!=manifold::Manifold::Error::NoError)
+        throw std::runtime_error("Box UV mapping failed manifold validation");
+    return result;
 }
 
 struct UVVec2 {
@@ -653,6 +731,32 @@ struct Topology {
         return epsilon * longest / linalg::length(linalg::cross(b-a, c-a));
     }
 
+    // Angle-weighted corner normals, joined through the physical halfedge
+    // fans rather than property vertices. Keep creases over 60 degrees sharp:
+    // a patch inside a flat box face must not inherit its side-wall normals.
+    std::vector<std::array<Point,3>> SmoothNormals() const {
+        UVUnionFind groups(faces.size()*3);
+        auto next = [](int h) { return 3*(h/3)+(h+1)%3; };
+        for (size_t h=0; h<pair.size(); ++h) {
+            int other=pair[h];
+            if (int(h)>other || linalg::dot(faces[h/3].normal,faces[other/3].normal)<0.5) continue;
+            groups.unite(h,next(other));
+            groups.unite(next(h),other);
+        }
+        std::vector<Point> sums(faces.size()*3,Point{0,0,0});
+        for (size_t f=0; f<faces.size(); ++f) for (int c=0; c<3; ++c) {
+            const auto& v=faces[f].vertices;
+            Point a=Unit(positions[v[(c+1)%3]]-positions[v[c]],"edge");
+            Point b=Unit(positions[v[(c+2)%3]]-positions[v[c]],"edge");
+            double angle=std::atan2(linalg::length(linalg::cross(a,b)),linalg::dot(a,b));
+            sums[groups.find(3*f+c)]+=angle*faces[f].normal;
+        }
+        std::vector<std::array<Point,3>> normals(faces.size());
+        for (size_t f=0; f<faces.size(); ++f) for (int c=0; c<3; ++c)
+            normals[f][c]=Unit(sums[groups.find(3*f+c)],"surface normal");
+        return normals;
+    }
+
     Cursor Closest(Point p) const {
         Cursor result{-1, {}};
         double best = std::numeric_limits<double>::infinity();
@@ -835,6 +939,72 @@ struct Piece {
     int face;
     std::vector<int> vertices;
     ChartTriangle chart;
+};
+
+struct DepthField {
+    std::vector<double> values;
+    int width, height;
+    double scale, offset, fade;
+    bool step;
+
+    DepthField(std::vector<double> data={}, int w=0, int h=0,
+               double s=1, double o=0, double f=0, bool sharpStep=false)
+        : values(std::move(data)), width(w), height(h), scale(s), offset(o), fade(f), step(sharpStep) {
+        if (!std::isfinite(scale) || !std::isfinite(offset) || !std::isfinite(fade) || fade<0)
+            throw std::invalid_argument("Depth scale/offset must be finite and fade must be nonnegative");
+        if (step && fade!=0) throw std::invalid_argument("A stepped depth boundary cannot also fade");
+        if (values.empty() && width==0 && height==0) return;
+        if (width<2 || height<2 || uint64_t(width)*height>2000000 ||
+            uint64_t(width)*height!=values.size())
+            throw std::invalid_argument("Depth requires a rectangular grid of at least 2x2 and at most two million samples");
+        for (double value:values)
+            if (!std::isfinite(value) || !std::isfinite(value*scale+offset))
+                throw std::invalid_argument("Depth samples and scaled depths must be finite");
+        // Without a transition band the supplied image must meet the surface
+        // itself. Otherwise a single shared boundary would tear the mesh.
+        if (!step && fade==0) for (int y=0; y<height; ++y) for (int x=0; x<width; ++x)
+            if ((x==0 || y==0 || x==width-1 || y==height-1) &&
+                values[size_t(y)*width+x]*scale+offset!=0)
+                throw std::invalid_argument("Depth without a fade requires zero depth on every boundary sample");
+    }
+
+    bool Enabled() const { return !values.empty(); }
+
+    double Evaluate(Point2 uv, double sizeU, double sizeV, double epsilon) const {
+        if (!Enabled()) return 0;
+        double u=std::clamp(uv.x,0.0,1.0), v=std::clamp(uv.y,0.0,1.0);
+        double edge=std::min({u*sizeU,(1-u)*sizeU,v*sizeV,(1-v)*sizeV});
+        if (!step && edge<=epsilon*16) return 0;
+        // Row zero is the top of the image, matching the texture's local V.
+        double x=u*(width-1), y=v*(height-1);
+        int i=std::min(int(x),width-2), j=std::min(int(y),height-2);
+        double a=x-i, b=y-j;
+        auto at=[&](int dx,int dy) { return values[size_t(j+dy)*width+i+dx]; };
+        double sample=(1-b)*((1-a)*at(0,0)+a*at(1,0))+b*((1-a)*at(0,1)+a*at(1,1));
+        double weight=fade==0 ? 1 : std::clamp(edge/fade,0.0,1.0);
+        weight=weight*weight*(3-2*weight);
+        double distance=(sample*scale+offset)*weight;
+        // Adjacent affine charts can evaluate the same zero-height boundary
+        // sample as 0 or a tiny residual. Step topology must make the SAME
+        // top/base weld decision on both sides, including wall generation.
+        // Sub-precision steps cannot form meaningful side-wall triangles.
+        return step && std::abs(distance)<=epsilon*16 ? 0 : distance;
+    }
+
+    static DepthField Image(const std::string& filename, double scale, double offset, double fade, bool step=false) {
+        int w=0,h=0,channels=0;
+        if (!stbi_info(filename.c_str(),&w,&h,&channels))
+            throw std::invalid_argument("Cannot read depth image: "+filename);
+        if (w<2 || h<2 || uint64_t(w)*h>2000000)
+            throw std::invalid_argument("Depth image must be at least 2x2 and at most two million pixels");
+        // Preserve 16-bit PNG precision; 8-bit inputs are expanded by stb.
+        std::unique_ptr<stbi_us,decltype(&stbi_image_free)> image(
+            stbi_load_16(filename.c_str(),&w,&h,&channels,1),stbi_image_free);
+        if (!image) throw std::invalid_argument("Cannot decode depth image: "+filename);
+        std::vector<double> data(size_t(w)*h);
+        for (size_t i=0; i<data.size(); ++i) data[i]=image.get()[i]/65535.0;
+        return DepthField(std::move(data),w,h,scale,offset,fade,step);
+    }
 };
 
 struct Remesh {
@@ -1040,35 +1210,155 @@ struct Remesh {
         return result;
     }
 
-    manifold::MeshGL64 Output(size_t propIndex, Point2 atlas, Point2 atlasSize, Point2 outside) {
+    // A planar corner admits one common miter direction: n_i . direction = 1
+    // for each incident face orientation. Translating the entire chart along
+    // that direction offsets every plane by the requested normal distance.
+    // It also transports ALL its UV samples, instead of moving just crease
+    // vertices past their immediate neighbors and folding refined triangles.
+    // This construction is independent of triangulation and world axes.
+    Point PlanarCornerDirection(const DepthField& depth) const {
+        if (!depth.Enabled() || std::none_of(depth.values.begin(),depth.values.end(),
+                [&](double value) { return value*depth.scale+depth.offset!=0; })) return {0,0,0};
+        std::vector<bool> covered(topology.faces.size(),false);
+        for (size_t f=0;f<pieces.size();++f)
+            for (const Piece& piece:pieces[f]) if (piece.chart.textured) covered[f]=true;
+        bool sharp=false;
+        for (size_t h=0;h<topology.pair.size();++h) {
+            int other=topology.pair[h]/3;
+            if (covered[h/3] && covered[other] &&
+                linalg::dot(topology.faces[h/3].normal,topology.faces[other].normal)<0.5) {
+                sharp=true;
+                break;
+            }
+        }
+        if (!sharp) return {0,0,0};
+
+        std::vector<Point> normals;
+        for (size_t f=0;f<covered.size();++f) if (covered[f]) {
+            Point n=topology.faces[f].normal;
+            bool duplicate=false;
+            for (Point previous:normals)
+                if (linalg::length(n-previous)<1e-8) { duplicate=true; break; }
+            if (!duplicate) normals.push_back(n);
+            if (normals.size()>3)
+                throw std::invalid_argument("Sharp depth joins require a planar corner with at most three face orientations");
+        }
+        // Incremental orthogonal constraints give the minimum-length solution
+        // for two planes and their common intersection for three independent
+        // planes. No unguarded matrix inverse at nearly parallel creases.
+        Point direction{0,0,0};
+        std::vector<Point> basis;
+        for (Point n:normals) {
+            Point perpendicular=n;
+            for (Point b:basis) perpendicular-=linalg::dot(perpendicular,b)*b;
+            double residual=1-linalg::dot(n,direction);
+            double length2=linalg::length2(perpendicular);
+            if (length2<1e-12) {
+                if (std::abs(residual)>1e-7)
+                    throw std::invalid_argument("Sharp depth planes do not admit a common miter direction");
+                continue;
+            }
+            direction+=(residual/length2)*perpendicular;
+            basis.push_back(perpendicular/std::sqrt(length2));
+        }
+        double ratio=linalg::length(direction);
+        if (!std::isfinite(ratio) || ratio>8)
+            throw std::invalid_argument("Sharp depth miter exceeds eight times the requested depth; soften the crease or split the patch");
+        for (Point n:normals)
+            if (std::abs(linalg::dot(n,direction)-1)>1e-7)
+                throw std::invalid_argument("Sharp depth miter is numerically unstable");
+        return direction;
+    }
+
+    manifold::MeshGL64 Output(size_t propIndex, Point2 atlas, Point2 atlasSize, Point2 outside,
+                             const DepthField& depth = {}) {
         const auto& input=topology.mesh;
         manifold::MeshGL64 output;
         output.numProp=std::max(size_t(input.numProp),propIndex+2);
         output.tolerance=input.tolerance;
         std::vector<int64_t> master(positions.size(),-1);
-        auto vertex=[&](const Piece& piece,int id) {
+        std::vector<int64_t> topMaster(depth.step ? positions.size() : 0,-1);
+        Point miter=PlanarCornerDirection(depth);
+        bool mitered=linalg::length2(miter)>0;
+        auto normals=depth.Enabled() && !mitered ? topology.SmoothNormals() : std::vector<std::array<Point,3>>{};
+        std::vector<Point> displaced=depth.Enabled() ? positions : std::vector<Point>{};
+        std::vector<bool> displacedSet(depth.Enabled() ? positions.size() : 0,false);
+        struct Wall { const Piece* piece; int a,b; };
+        std::vector<std::vector<Wall>> walls(input.runOriginalID.size());
+        if (depth.step) {
+            // Cancel paired patch edges by physical identity. The remaining
+            // loop is the exact remeshed sticker boundary, including every
+            // inserted edge/pixel vertex. No position-based welding is used.
+            std::map<std::pair<int,int>,Wall> boundary;
+            for (const auto& facePieces:pieces) for (const Piece& piece:facePieces) {
+                if (!piece.chart.textured) continue;
+                auto ring=Boundary(piece);
+                for (size_t i=0;i<ring.size();++i) {
+                    int a=ring[i],b=ring[(i+1)%ring.size()];
+                    auto key=std::make_pair(std::min(a,b),std::max(a,b));
+                    auto found=boundary.find(key);
+                    if (found==boundary.end()) boundary.emplace(key,Wall{&piece,a,b});
+                    else boundary.erase(found);
+                }
+            }
+            for (const auto& edge:boundary) {
+                size_t run=std::upper_bound(input.runIndex.begin(),input.runIndex.end(),
+                                            3*edge.second.piece->face)-input.runIndex.begin()-1;
+                walls[run].push_back(edge.second);
+            }
+        }
+        auto vertex=[&](const Piece& piece,int id,bool wall=false) {
             Point p=positions[id];
             Point weights=topology.Bary(piece.face,p);
             size_t index=output.NumVert();
             Point2 uv=piece.chart.Evaluate(grid.Project(p),outside);
+            Point target=p;
+            double distance=0;
+            if (depth.Enabled() && (piece.chart.textured || !depth.step)) {
+                distance=piece.chart.textured
+                    ? depth.Evaluate(uv,grid.horizontal.back(),grid.vertical.back(),topology.epsilon) : 0;
+                if (distance!=0) {
+                    Point direction=miter;
+                    if (!mitered) {
+                        Point normal{0,0,0};
+                        for (int c=0; c<3; ++c) normal+=weights[c]*normals[piece.face][c];
+                        direction=Unit(normal,"interpolated surface normal");
+                    }
+                    target+=distance*direction;
+                    for (int c=0; c<3; ++c) if (!std::isfinite(target[c]))
+                        throw std::invalid_argument("Depth displacement exceeds finite coordinates");
+                }
+                if (!displacedSet[id]) { displaced[id]=target; displacedSet[id]=true; }
+                else if (linalg::length(target-displaced[id])>topology.epsilon*32)
+                    throw std::invalid_argument("Depth patch crosses a sharp crease; restrict it to a smooth surface");
+                target=displaced[id];  // All UV seam copies share exact geometry.
+            }
             if (piece.chart.textured) {
                 uv.x=atlas.x+std::clamp(uv.x,0.0,1.0)*atlasSize.x;
                 uv.y=atlas.y+std::clamp(uv.y,0.0,1.0)*atlasSize.y;
             }
+            if (wall) uv=outside;
             for (size_t c=0;c<output.numProp;++c) {
                 double value=0;
-                if (c<3) value=p[c];
+                if (c<3) value=target[c];
                 else if (c<input.numProp) for (int k=0;k<3;++k)
                     value+=weights[k]*input.vertProperties[input.triVerts[3*piece.face+k]*input.numProp+c];
                 if (c==propIndex) value=uv.x;
                 if (c==propIndex+1) value=uv.y;
                 output.vertProperties.push_back(value);
             }
-            if (master[id]<0) master[id]=index;
-            else { output.mergeFromVert.push_back(index); output.mergeToVert.push_back(master[id]); }
+            auto& weld=depth.step && distance!=0 ? topMaster : master;
+            if (weld[id]<0) weld[id]=index;
+            else { output.mergeFromVert.push_back(index); output.mergeToVert.push_back(weld[id]); }
             return uint64_t(index);
         };
-        auto triangle=[&](int face,uint64_t a,uint64_t b,uint64_t c) {
+        auto triangle=[&](int face,uint64_t a,uint64_t b,uint64_t c,bool wall=false) {
+            if (depth.Enabled() && !wall) {
+                Point normal=linalg::cross(output.GetVertPos(b)-output.GetVertPos(a),
+                                           output.GetVertPos(c)-output.GetVertPos(a));
+                if (linalg::dot(normal,topology.faces[face].normal)<=0)
+                    throw std::invalid_argument("Depth folds or collapses a triangle; reduce displacement or increase resolution");
+            }
             output.triVerts.insert(output.triVerts.end(),{a,b,c});
             if (!input.faceID.empty()) output.faceID.push_back(input.faceID[face]);
         };
@@ -1086,6 +1376,8 @@ struct Remesh {
                     center/=double(boundary.size());
                     int id=positions.size();
                     positions.push_back(center); master.push_back(-1);
+                    if (depth.Enabled()) { displaced.push_back(center); displacedSet.push_back(false); }
+                    if (depth.step) topMaster.push_back(-1);
                     uint64_t mid=vertex(piece,id);
                     for (size_t k=0;k<corners.size();++k)
                         triangle(f,mid,corners[k],corners[(k+1)%corners.size()]);
@@ -1109,6 +1401,33 @@ struct Remesh {
                     output.runTransform.insert(output.runTransform.end(),
                         input.runTransform.begin()+12*run,input.runTransform.begin()+12*(run+1));
                 for (const Piece* piece:entry.second) emit(*piece);
+            }
+            if (!walls[run].empty()) {
+                output.runIndex.push_back(output.triVerts.size());
+                output.runOriginalID.push_back(input.runOriginalID[run]);
+                if (!input.runTransform.empty())
+                    output.runTransform.insert(output.runTransform.end(),
+                        input.runTransform.begin()+12*run,input.runTransform.begin()+12*(run+1));
+                for (const Wall& wall:walls[run]) {
+                    const Piece& piece=*wall.piece;
+                    auto distance=[&](int id) {
+                        return depth.Evaluate(piece.chart.Evaluate(grid.Project(positions[id]),outside),
+                                              grid.horizontal.back(),grid.vertical.back(),topology.epsilon);
+                    };
+                    double da=distance(wall.a),db=distance(wall.b);
+                    if ((da<0 && db>0) || (da>0 && db<0))
+                        throw std::invalid_argument("Stepped depth changes sign along a boundary edge; use a fade or a one-sided boundary");
+                    if (da==0 && db==0) continue;
+                    uint64_t a=vertex(piece,wall.a,true),b=vertex(piece,wall.b,true);
+                    Piece base=piece;
+                    base.chart={};
+                    uint64_t baseA=vertex(base,wall.a,true),baseB=vertex(base,wall.b,true);
+                    // Reverse the top boundary, and pair the bottom boundary
+                    // with the untouched outside. This winding works for both
+                    // embossing and engraving; zero-height ends need one tri.
+                    if (da!=0) triangle(piece.face,b,a,baseA,true);
+                    if (db!=0) triangle(piece.face,b,baseA,baseB,true);
+                }
             }
         }
         output.runIndex.push_back(output.triVerts.size());
@@ -1134,7 +1453,8 @@ manifold::Manifold GeodesicUV(const manifold::Manifold& man, size_t propIndex,
                               double uDirectionX, double uDirectionY, double uDirectionZ,
                               double sizeU, double sizeV,
                               double atlasU, double atlasV, double atlasWidth, double atlasHeight,
-                              double outsideU, double outsideV, double pixelSize) {
+                              double outsideU, double outsideV, double pixelSize,
+                              const SurfaceUV::DepthField& depth = {}) {
     for (double value : {originX,originY,originZ,normalX,normalY,normalZ,
                          uDirectionX,uDirectionY,uDirectionZ,sizeU,sizeV,
                          atlasU,atlasV,atlasWidth,atlasHeight,outsideU,outsideV,pixelSize})
@@ -1154,10 +1474,38 @@ manifold::Manifold GeodesicUV(const manifold::Manifold& man, size_t propIndex,
                          {uDirectionX,uDirectionY,uDirectionZ},sizeU,sizeV,pixelSize);
     SurfaceUV::Remesh remesh(topology,grid);
     remesh.Build();
-    manifold::Manifold result(remesh.Output(propIndex,{atlasU,atlasV},{atlasWidth,atlasHeight},{outsideU,outsideV}));
+    manifold::Manifold result(remesh.Output(propIndex,{atlasU,atlasV},{atlasWidth,atlasHeight},{outsideU,outsideV},depth));
     if (result.Status()!=manifold::Manifold::Error::NoError || result.IsEmpty())
         throw std::runtime_error("Surface UV retriangulation failed manifold validation");
     return result;
+}
+
+manifold::Manifold GeodesicUVDepth(const manifold::Manifold& man, size_t propIndex,
+                                 double originX, double originY, double originZ,
+                                 double normalX, double normalY, double normalZ,
+                                 double uDirectionX, double uDirectionY, double uDirectionZ,
+                                 double sizeU, double sizeV,
+                                 double atlasU, double atlasV, double atlasWidth, double atlasHeight,
+                                 double outsideU, double outsideV, double pixelSize,
+                                 const std::vector<double>& values, int width, int height,
+                                 double scale, double offset, double fade, bool step) {
+    if (values.empty()) throw std::invalid_argument("Depth grid must not be empty");
+    return GeodesicUV(man,propIndex,originX,originY,originZ,normalX,normalY,normalZ,
+                      uDirectionX,uDirectionY,uDirectionZ,sizeU,sizeV,atlasU,atlasV,atlasWidth,atlasHeight,
+                      outsideU,outsideV,pixelSize,SurfaceUV::DepthField(values,width,height,scale,offset,fade,step));
+}
+
+manifold::Manifold GeodesicUVDepthImage(const manifold::Manifold& man, size_t propIndex,
+                                      double originX, double originY, double originZ,
+                                      double normalX, double normalY, double normalZ,
+                                      double uDirectionX, double uDirectionY, double uDirectionZ,
+                                      double sizeU, double sizeV,
+                                      double atlasU, double atlasV, double atlasWidth, double atlasHeight,
+                                      double outsideU, double outsideV, double pixelSize,
+                                      const std::string& filename, double scale, double offset, double fade, bool step) {
+    return GeodesicUV(man,propIndex,originX,originY,originZ,normalX,normalY,normalZ,
+                      uDirectionX,uDirectionY,uDirectionZ,sizeU,sizeV,atlasU,atlasV,atlasWidth,atlasHeight,
+                      outsideU,outsideV,pixelSize,SurfaceUV::DepthField::Image(filename,scale,offset,fade,step));
 }
 
 /**
@@ -1846,8 +2194,8 @@ manifold::Manifold LoadImage(const std::string& texturePath, const float depth, 
     std::vector<float> propertyMap(width * height * numProps);
     for (int i = 0; i < width * height; ++i) {
         propertyMap[i * numProps] = depth;
-        for (int c = 1; c < channels; ++c) {
-            propertyMap[i * numProps + c] = static_cast<float>(data[i * channels + c]) / 255.0f;  // Normalize to [0, 1]
+        for (int c = 0; c < channels; ++c) {
+            propertyMap[i * numProps + 1 + c] = static_cast<float>(data[i * channels + c]) / 255.0f;  // Normalize to [0, 1]
         }
     }
     stbi_image_free(data); // Free the image data

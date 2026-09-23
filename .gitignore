@@ -107,6 +107,7 @@ Temporary Items
 
 build
 buildWASM
+build-cljs
 docs/html
 node_modules/
 bindings/wasm/examples/built
