@@ -8,6 +8,7 @@ manifold3d/linalg/IntegerVec4.class
 manifold3d/pub/Polygons.class
 manifold3d/linalg/IntegerVec3Vector$1.class
 manifold3d/linalg/DoubleMat3x4Vector.class
+manifold3d/ModelTexture.class
 manifold3d/LibraryPaths.class
 manifold3d/pub/PolygonsVector.class
 manifold3d/linalg/DoubleMat3x4Vector$1.class
@@ -20,6 +21,7 @@ manifold3d/pub/Smoothness.class
 manifold3d/pub/ExecutionParams.class
 manifold3d/UIntVector.class
 manifold3d/ManifoldPair.class
+manifold3d/Model.class
 manifold3d/linalg/DoubleMat3x4.class
 manifold3d/pub/PolygonsVector$1.class
 manifold3d/linalg/DoubleVec4.class
@@ -31,14 +33,16 @@ manifold3d/linalg/IntegerVec4Vector$1.class
 manifold3d/manifold/Rect.class
 manifold3d/Manifold.class
 manifold3d/IntVector.class
-manifold3d/pub/Properties.class
 manifold3d/ManifoldVector$1.class
 manifold3d/pub/SimplePolygon.class
+manifold3d/ModelVector.class
 manifold3d/manifold/CrossSection$JoinType.class
 manifold3d/manifold/CrossSection$FillRule.class
 manifold3d/pub/SimplePolygon$1.class
+manifold3d/ByteVector.class
 manifold3d/manifold/ExportOptions.class
 manifold3d/Quality.class
+manifold3d/SpatialIndex.class
 manifold3d/linalg/DoubleVec4Vector$1.class
 manifold3d/linalg/DoubleVec2.class
 manifold3d/linalg/DoubleVec3$1.class
@@ -47,6 +51,7 @@ manifold3d/MeshUtils.class
 manifold3d/linalg/IntegerVec3.class
 manifold3d/pub/OpType.class
 manifold3d/BufferUtils.class
+manifold3d/ModelIO.class
 manifold3d/linalg/DoubleVec3Vector$1.class
 manifold3d/MeshUtils$LoftAlgorithm.class
 manifold3d/manifold/MeshGL.class
