@@ -17,6 +17,7 @@
 
     <properties>
         <manifold.build.dir>${project.basedir}/../../build</manifold.build.dir>
+        <manifold.library.name>libmanifold.so</manifold.library.name>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
@@ -44,6 +45,14 @@
         </repository>
     </distributionManagement>
 
+    <profiles>
+        <profile>
+            <id>macos-native</id>
+            <activation><os><family>mac</family></os></activation>
+            <properties><manifold.library.name>libmanifold.dylib</manifold.library.name></properties>
+        </profile>
+    </profiles>
+
     <build>
         <resources>
             <resource>
@@ -53,7 +62,7 @@
                 <directory>${manifold.build.dir}/src/</directory>
                 <includes>
                     <include>libmanifold.so</include>
-                    <include>libmanifold.2.4.5.dylib</include>
+                    <include>libmanifold.dylib</include>
                 </includes>
             </resource>
             <resource>
@@ -78,9 +87,9 @@
                         </goals>
                         <configuration>
                             <target>
-                                <delete file="${project.build.outputDirectory}/libmanifold.so"/>
-                                <copy file="${manifold.build.dir}/src/libmanifold.so"
-                                      tofile="${project.build.outputDirectory}/libmanifold.so"/>
+                                <delete file="${project.build.outputDirectory}/${manifold.library.name}"/>
+                                <copy file="${manifold.build.dir}/src/${manifold.library.name}"
+                                      tofile="${project.build.outputDirectory}/${manifold.library.name}"/>
                             </target>
                         </configuration>
                     </execution>

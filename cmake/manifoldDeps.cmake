@@ -294,7 +294,7 @@ FetchContent_MakeAvailable(TextToPolygon)
 
 # The pinned dependency uses GCC-only floating-point `d` suffixes. Generate
 # a portable translation unit without modifying downloaded source trees.
-if(EMSCRIPTEN)
+if(EMSCRIPTEN OR APPLE)
   set(TEXT_POLYGON_SOURCE "${texttopolygon_SOURCE_DIR}/src/text_to_polygon.cpp")
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${TEXT_POLYGON_SOURCE}")
   file(READ "${TEXT_POLYGON_SOURCE}" TEXT_POLYGON_CODE)

@@ -11,6 +11,12 @@ import manifold3d.linalg.DoubleVec3;
 public class UpstreamTest {
     @Rule public TemporaryFolder output = new TemporaryFolder();
 
+    @Test public void vectorCanInitializeNativeLibrary() {
+        try (ManifoldVector values = new ManifoldVector()) {
+            assertEquals(0, values.size());
+        }
+    }
+
     @Test public void executionContextLifecycle() {
         try (ExecutionContext context = new ExecutionContext()) {
             assertFalse(context.cancelled());

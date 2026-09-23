@@ -5,10 +5,69 @@ on:
     branches: [master, main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the tested version from main to Clojars
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clj-bindings-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  jni-linux:
-    runs-on: ubuntu-24.04
+  version:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BEFORE: ${{ github.event.before }}
+          REQUEST_PUBLISH: ${{ inputs.publish }}
+        run: |
+          version=$(cat bindings/java/version.txt)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          publish=false
+          if [[ "$REF" == refs/heads/main ]]; then
+            if [[ "$EVENT" == workflow_dispatch && "$REQUEST_PUBLISH" == true ]]; then
+              publish=true
+            elif [[ "$EVENT" == push && "$BEFORE" != 0000000000000000000000000000000000000000 ]]; then
+              if ! git diff --quiet "$BEFORE" HEAD -- bindings/java/version.txt; then
+                publish=true
+              fi
+            fi
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+  jni:
+    needs: version
+    name: JNI ${{ matrix.classifier }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            classifier: linux-x86_64
+            parallel: 'OFF'
+          - os: ubuntu-22.04
+            classifier: linux-TBB-x86_64
+            parallel: 'ON'
+          - os: macos-15-intel
+            classifier: mac-TBB-x86_64
+            parallel: 'ON'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -16,20 +75,104 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - name: Install native dependencies
-        run: sudo apt-get update && sudo apt-get install -y libassimp-dev
+      - uses: lukka/get-cmake@v4.2.3
+        with:
+          cmakeVersion: 3.31.6
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-12 libassimp-dev libtbb-dev
+          echo 'CC=gcc-12' >> "$GITHUB_ENV"
+          echo 'CXX=g++-12' >> "$GITHUB_ENV"
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install assimp tbb
       - name: Configure
         run: >-
-          cmake -S . -B build-upstream -DCMAKE_BUILD_TYPE=Release
-          -DMANIFOLD_EXPORT=ON -DMANIFOLD_PAR=OFF -DMANIFOLD_TEST=ON
+          cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+          -DMANIFOLD_EXPORT=ON -DMANIFOLD_PAR=${{ matrix.parallel }} -DMANIFOLD_TEST=ON
           -DMANIFOLD_PYBIND=OFF -DMANIFOLD_JSBIND=OFF
       - name: Build native library and tests
-        run: cmake --build build-upstream --parallel 4
-      - name: Test native extensions
-        run: ctest --test-dir build-upstream --output-on-failure
+        run: cmake --build build-release --parallel 4
+      - name: Test native library and extensions
+        run: ctest --test-dir build-release --output-on-failure
+      - name: Set release version
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: mvn -B -f bindings/java/pom.xml versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false
       - name: Build and test JNI
-        run: mvn -B -f bindings/java/pom.xml -Dmanifold.build.dir="$PWD/build-upstream" package
+        env:
+          CLASSIFIER: ${{ matrix.classifier }}
+        run: >-
+          mvn -B -f bindings/java/pom.xml -Dmanifold.build.dir="$PWD/build-release"
+          -Dos.classifier="$CLASSIFIER" clean package
+      - name: Test packaged JNI without the native build directory
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          CLASSIFIER: ${{ matrix.classifier }}
+        run: |
+          mvn -B -f bindings/java/pom.xml dependency:build-classpath \
+            -DincludeScope=runtime -Dmdep.outputFile=target/runtime-classpath.txt
+          mv build-release build-release-hidden
+          trap 'mv build-release-hidden build-release' EXIT
+          java -cp "bindings/java/target/manifold3d-$VERSION-$CLASSIFIER.jar:bindings/java/target/test-classes:$(cat bindings/java/target/runtime-classpath.txt)" \
+            manifold3d.PackagedSmoke
       - uses: actions/upload-artifact@v4
         with:
-          name: manifold-jni-linux-x86_64
-          path: bindings/java/target/manifold3d-1.0.39.jar
+          name: manifold-${{ needs.version.outputs.version }}-${{ matrix.classifier }}
+          path: bindings/java/target/manifold3d-${{ needs.version.outputs.version }}-${{ matrix.classifier }}.jar
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: diagnostics-${{ matrix.classifier }}
+          path: |
+            bindings/java/target/surefire-reports/
+            build-release/Testing/Temporary/LastTest.log
+
+  publish:
+    needs: [version, jni]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: manifold-${{ needs.version.outputs.version }}-*
+          merge-multiple: true
+          path: release-jars
+      - name: Publish tested artifacts to Clojars
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          CLOJARS_PASSPHRASE: ${{ secrets.CLOJARS_PASSPHRASE }}
+          CLOJARS_TOKEN: ${{ secrets.CLOJARS_TOKEN }}
+        run: |
+          test -n "$CLOJARS_TOKEN"
+          mvn -B -f bindings/java/pom.xml versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false
+          mvn -B org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file \
+            -DpomFile=bindings/java/pom.xml \
+            -DrepositoryId=clojars -Durl=https://clojars.org/repo \
+            -Dfile="release-jars/manifold3d-$VERSION-linux-x86_64.jar" \
+            -Dclassifier=linux-x86_64 \
+            -Dfiles="release-jars/manifold3d-$VERSION-linux-TBB-x86_64.jar,release-jars/manifold3d-$VERSION-mac-TBB-x86_64.jar" \
+            -Dclassifiers=linux-TBB-x86_64,mac-TBB-x86_64 -Dtypes=jar,jar \
+            --settings=bindings/java/settings.xml
+      - name: Verify published bytes
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir downloaded
+          for classifier in linux-x86_64 linux-TBB-x86_64 mac-TBB-x86_64; do
+            name="manifold3d-$VERSION-$classifier.jar"
+            curl --fail --silent --show-error --retry 8 --retry-all-errors --retry-delay 5 \
+              "https://repo.clojars.org/org/clojars/cartesiantheatrics/manifold3d/$VERSION/$name" \
+              -o "downloaded/$name"
+            cmp "release-jars/$name" "downloaded/$name"
+          done
+          echo "Published and verified all three classifiers for $VERSION" >> "$GITHUB_STEP_SUMMARY"

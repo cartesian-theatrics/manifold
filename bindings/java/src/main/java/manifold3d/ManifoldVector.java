@@ -14,7 +14,7 @@ import java.util.NoSuchElementException;
 @Platform(compiler = "cpp17", include = {"manifold/manifold.h", "<vector>"}, link = { "manifold" })
 @Name("std::vector<manifold::Manifold>")
 public class ManifoldVector extends Pointer implements Iterable<Manifold>  {
-    static { Loader.load(); }
+    static { Manifold.ensureLoaded(); Loader.load(); }
 
     private int current = 0;
 

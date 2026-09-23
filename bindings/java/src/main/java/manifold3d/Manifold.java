@@ -56,7 +56,7 @@ public class Manifold extends Pointer {
         } else if (osName.contains("mac")) {
             try {
                 System.out.println("Loading Manifold");
-                System.load(Loader.extractResource("/libmanifold.2.4.5.dylib", null, "libmanifold", ".dylib").getAbsolutePath());
+                System.load(Loader.extractResource("/libmanifold.dylib", null, "libmanifold", ".dylib").getAbsolutePath());
                 System.out.println("Finished Loading.");
             } catch (IOException e) {
                 throw new RuntimeException(e);

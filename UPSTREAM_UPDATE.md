@@ -70,5 +70,14 @@ clojure -M:clj-dev:test-regressions
 
 Validated on Linux x86-64 (serial native build) and Emscripten 3.1.64 in Node
 and Chromium, including optimized CLJS. macOS/Windows JNI packaging and native
-parallel builds have not been validated as part of this update. The Linux JNI
-workflow builds/tests artifacts without publishing them.
+parallel builds have not been validated as part of this update. The JNI workflow builds/tests Linux serial, Linux TBB and macOS Intel TBB
+artifacts. A `bindings/java/version.txt` change pushed to `main` publishes that
+version to Clojars only after every build, native test suite, Java test suite and
+packaged-jar smoke test passes. Publication downloads and compares all three
+classifiers with the tested artifacts. Manual dispatch with `publish: true` on
+`main` supports retrying a failed publication after fixing the pipeline.
+
+The release merge includes the published 2.1.0 history. Its `GetTriangles` fix
+is covered by the 3.5 halfedge implementation, and its `ManifoldVector` loading
+fix uses the shared `Manifold.ensureLoaded()` bootstrap. The 2.2.0 release keeps
+the existing platform classifier names.
