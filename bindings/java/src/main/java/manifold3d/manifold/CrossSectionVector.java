@@ -16,7 +16,7 @@ import java.util.NoSuchElementException;
           link = { "manifold" })
 @Name("std::vector<manifold::CrossSection>")
 public class CrossSectionVector extends Pointer implements Iterable<CrossSection> {
-    static { Loader.load(); }
+    static { manifold3d.Manifold.ensureLoaded(); Loader.load(); }
 
     @Override
     public Iterator<CrossSection> iterator() {

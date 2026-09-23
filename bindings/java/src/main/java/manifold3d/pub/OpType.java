@@ -8,7 +8,7 @@ import manifold3d.LibraryPaths;
 @Platform(compiler = "cpp17", include = {"manifold/manifold.h"}, link = {"manifold"})
 @Namespace("manifold")
 public class OpType extends IntPointer {
-    static { Loader.load(); }
+    static { manifold3d.Manifold.ensureLoaded(); Loader.load(); }
     public OpType() { allocate(); }
     private native void allocate();
     public OpType(int value) { this(); put(value); }

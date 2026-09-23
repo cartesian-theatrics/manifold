@@ -30,8 +30,10 @@ MeshGL run flags and tolerance survive a portable data round-trip. See
 The bridge `bindings/java/src/main/cpp/manifold3d/upstream.hpp` adapts stream I/O
 and scalar-field callbacks. JVM SDF callbacks run serially on the calling thread.
 The JS RayHit bridge represents face IDs as numbers (the WASM mesh limits are
-below JS's exact integer limit). Context/OBJ JNI entry points initialize the
-packaged native library even when they are the first entry point in a process.
+below JS's exact integer limit). JNI classes linked to Manifold initialize the packaged native library even
+when they are the first entry point in a process, including Model namespace
+imports. CI tests each common entry point in a fresh JVM with the native build
+directory hidden.
 Assimp import/export errors throw in Release builds rather than relying on
 compiled-out debug assertions.
 

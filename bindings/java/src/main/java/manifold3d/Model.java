@@ -8,7 +8,7 @@ import manifold3d.pub.Box;
 @Platform(compiler="cpp17", include="model_utils.hpp", link={"manifold"})
 @Namespace("manifold")
 public class Model extends Pointer {
-    static { Loader.load(); }
+    static { manifold3d.Manifold.ensureLoaded(); Loader.load(); }
     public Model() { allocate(); }
     private native void allocate();
     public Model(@Const @ByRef Manifold geometry) { allocate(geometry); }

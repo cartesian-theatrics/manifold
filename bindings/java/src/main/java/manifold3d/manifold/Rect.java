@@ -11,7 +11,7 @@ import manifold3d.manifold.CrossSection;
 @Platform(compiler = "cpp17", include = { "manifold/manifold.h" }, link = { "manifold" })
 @Namespace("manifold")
 public class Rect extends Pointer {
-    static { Loader.load(); }
+    static { manifold3d.Manifold.ensureLoaded(); Loader.load(); }
 
     public Rect() { allocate(); }
     private native void allocate();

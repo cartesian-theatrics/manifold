@@ -8,7 +8,7 @@ import manifold3d.Manifold;
 @Platform(compiler = "cpp17", include = {"manifold/manifold.h"}, link = { "manifold" })
 @Name("std::pair<manifold::Manifold, manifold::Manifold>")
 public class ManifoldPair extends Pointer {
-    static { Loader.load(); }
+    static { manifold3d.Manifold.ensureLoaded(); Loader.load(); }
 
     public ManifoldPair() { allocate(); }
     private native void allocate();

@@ -5,7 +5,7 @@ import manifold3d.linalg.DoubleVec3;
 @Platform(compiler="cpp17", include="model_utils.hpp", link={"manifold"})
 @Namespace("manifold")
 public class ModelTexture extends Pointer {
-    static { Loader.load(); }
+    static { manifold3d.Manifold.ensureLoaded(); Loader.load(); }
     public ModelTexture() { allocate(); }
     private native void allocate();
     @MemberSetter public native void mapping(@StdString String value);

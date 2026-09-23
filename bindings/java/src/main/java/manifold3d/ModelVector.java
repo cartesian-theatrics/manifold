@@ -7,7 +7,7 @@ import org.bytedeco.javacpp.annotation.*;
 @Platform(compiler="cpp17", include="manifold/model.h", link={"manifold"})
 @Name("std::vector<manifold::Model>")
 public class ModelVector extends Pointer {
-    static { Loader.load(); }
+    static { manifold3d.Manifold.ensureLoaded(); Loader.load(); }
     public ModelVector() { allocate(); }
     private native void allocate();
     public native @Cast("size_t") long size();

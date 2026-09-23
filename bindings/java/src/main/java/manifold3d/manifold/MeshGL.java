@@ -11,7 +11,7 @@ import manifold3d.FloatVector;
 @Platform(compiler = "cpp17", include = "manifold/meshIO.h", link = { "manifold" })
 @Namespace("manifold")
 public class MeshGL extends Pointer {
-    static { Loader.load(); }
+    static { manifold3d.Manifold.ensureLoaded(); Loader.load(); }
 
     public MeshGL() { allocate(); }
     private native void allocate();

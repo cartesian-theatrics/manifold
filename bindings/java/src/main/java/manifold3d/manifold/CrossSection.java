@@ -17,7 +17,7 @@ import manifold3d.pub.Polygons;
           link = { "manifold" })
 @Namespace("manifold")
 public class CrossSection extends Pointer {
-    static { Loader.load(); }
+    static { manifold3d.Manifold.ensureLoaded(); Loader.load(); }
 
     public CrossSection() { allocate(); }
     private native void allocate();

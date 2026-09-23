@@ -21,7 +21,7 @@ import java.nio.IntBuffer;
 
 @Platform(compiler = "cpp17", include = {"mesh_utils.hpp", "buffer_utils.hpp"}, link = {"manifold"})
 public class MeshUtils extends Pointer {
-    static { Loader.load(); }
+    static { manifold3d.Manifold.ensureLoaded(); Loader.load(); }
 
     public MeshUtils() { }
 

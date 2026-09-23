@@ -116,8 +116,10 @@ jobs:
             -DincludeScope=runtime -Dmdep.outputFile=target/runtime-classpath.txt
           mv build-release build-release-hidden
           trap 'mv build-release-hidden build-release' EXIT
-          java -cp "bindings/java/target/manifold3d-$VERSION-$CLASSIFIER.jar:bindings/java/target/test-classes:$(cat bindings/java/target/runtime-classpath.txt)" \
-            manifold3d.PackagedSmoke
+          for entry in manifold3d.Model manifold3d.ManifoldVector manifold3d.ExecutionContext manifold3d.manifold.CrossSection manifold3d.manifold.MeshGL; do
+            java -cp "bindings/java/target/manifold3d-$VERSION-$CLASSIFIER.jar:bindings/java/target/test-classes:$(cat bindings/java/target/runtime-classpath.txt)" \
+              manifold3d.PackagedSmoke "$entry"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: manifold-${{ needs.version.outputs.version }}-${{ matrix.classifier }}
