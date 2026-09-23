@@ -9,7 +9,7 @@ import java.util.Iterator;
 import java.lang.Iterable;
 import java.util.NoSuchElementException;
 
-@Platform(compiler = "cpp17", include = "linalg.h")
+@Platform(compiler = "cpp17", include = "manifold/linalg.h")
 @Namespace("linalg")
 @Name("mat<double, 2, 3>")
 public class DoubleMat2x3 extends DoublePointer implements Iterable<DoubleVec2> {

@@ -15,7 +15,9 @@
 #include "manifold/polygon.h"
 
 #include <algorithm>
+#ifndef MANIFOLD_NO_IOSTREAM
 #include <fstream>
+#endif
 #include <limits>
 
 #include "test.h"
@@ -25,8 +27,8 @@ namespace {
 using namespace manifold;
 
 Polygons Turn180(Polygons polys) {
-  for (SimplePolygon &poly : polys) {
-    for (vec2 &vert : poly) {
+  for (SimplePolygon& poly : polys) {
+    for (vec2& vert : poly) {
       vert *= -1.0;
     }
   }
@@ -36,8 +38,8 @@ Polygons Turn180(Polygons polys) {
 Polygons Duplicate(Polygons polys) {
   double xMin = std::numeric_limits<double>::infinity();
   double xMax = -std::numeric_limits<double>::infinity();
-  for (SimplePolygon &poly : polys) {
-    for (vec2 &vert : poly) {
+  for (SimplePolygon& poly : polys) {
+    for (vec2& vert : poly) {
       xMin = std::min(xMin, vert.x);
       xMax = std::max(xMax, vert.x);
     }
@@ -47,7 +49,7 @@ Polygons Duplicate(Polygons polys) {
   const int nPolys = polys.size();
   for (int i = 0; i < nPolys; ++i) {
     SimplePolygon poly = polys[i];
-    for (vec2 &vert : poly) {
+    for (vec2& vert : poly) {
       vert.x += shift;
     }
     polys.push_back(poly);
@@ -55,10 +57,8 @@ Polygons Duplicate(Polygons polys) {
   return polys;
 }
 
-void TestPoly(const Polygons &polys, int expectedNumTri,
+void TestPoly(const Polygons& polys, int expectedNumTri,
               double epsilon = -1.0) {
-  PolygonParams().verbose = options.params.verbose;
-
   std::vector<ivec3> triangles;
   EXPECT_NO_THROW(triangles = Triangulate(polys, epsilon));
   EXPECT_EQ(triangles.size(), expectedNumTri) << "Basic";
@@ -68,8 +68,6 @@ void TestPoly(const Polygons &polys, int expectedNumTri,
 
   EXPECT_NO_THROW(triangles = Triangulate(Duplicate(polys), epsilon));
   EXPECT_EQ(triangles.size(), 2 * expectedNumTri) << "Duplicate";
-
-  PolygonParams().verbose = false;
 }
 
 class PolygonTestFixture : public testing::Test {
@@ -83,7 +81,8 @@ class PolygonTestFixture : public testing::Test {
   void TestBody() { TestPoly(polys, expectedNumTri, epsilon); }
 };
 
-void RegisterPolygonTestsFile(const std::string &filename) {
+#ifndef MANIFOLD_NO_IOSTREAM
+void RegisterPolygonTestsFile(const std::string& filename) {
   auto f = std::ifstream(filename);
   EXPECT_TRUE(f.is_open());
 
@@ -115,14 +114,16 @@ void RegisterPolygonTestsFile(const std::string &filename) {
     }
     testing::RegisterTest(
         "Polygon", name.c_str(), nullptr, nullptr, __FILE__, __LINE__,
-        [=, polys = std::move(polys)]() -> PolygonTestFixture * {
+        [=, polys = std::move(polys)]() -> PolygonTestFixture* {
           return new PolygonTestFixture(polys, epsilon, expectedNumTri);
         });
   }
   f.close();
 }
+#endif
 }  // namespace
 
+#ifndef MANIFOLD_NO_IOSTREAM
 void RegisterPolygonTests() {
   std::string files[] = {"polygon_corpus.txt", "sponge.txt", "zebra.txt",
                          "zebra3.txt"};
@@ -136,3 +137,9 @@ void RegisterPolygonTests() {
   for (auto f : files) RegisterPolygonTestsFile(dir + "/polygons/" + f);
 #endif
 }
+#else
+// Stub when MANIFOLD_NO_IOSTREAM is set: polygon corpus tests need
+// std::ifstream to load fixtures, so they're skipped. test_main.cpp
+// still calls RegisterPolygonTests(); this stub keeps the link clean.
+void RegisterPolygonTests() {}
+#endif

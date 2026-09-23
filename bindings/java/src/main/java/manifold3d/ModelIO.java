@@ -1,7 +1,7 @@
 package manifold3d;
 import org.bytedeco.javacpp.*;
 import org.bytedeco.javacpp.annotation.*;
-@Platform(compiler="cpp17", include="model_utils.hpp", linkpath={LibraryPaths.MANIFOLD_LIB_DIR}, link={"manifold"})
+@Platform(compiler="cpp17", include="model_utils.hpp", link={"manifold"})
 @Namespace("manifold")
 public class ModelIO extends Pointer {
     static { Loader.load(); }

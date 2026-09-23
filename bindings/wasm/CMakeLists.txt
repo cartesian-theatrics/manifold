@@ -13,11 +13,7 @@
 # limitations under the License.
 
 add_executable(manifoldjs bindings.cpp mesh_utils.cpp)
-target_include_directories(manifoldjs PRIVATE
-  ${PROJECT_SOURCE_DIR}/bindings/java/src/main/cpp/manifold3d
-  ${PROJECT_SOURCE_DIR}/include/manifold)
-# Keep the generated loader external to Closure; expose both browser globals
-# and CommonJS consumers from the same artifact.
+target_include_directories(manifoldjs PRIVATE ${PROJECT_SOURCE_DIR}/bindings/java/src/main/cpp/manifold3d)
 option(MANIFOLD_JS_ESM "Emit an ES module loader" ON)
 target_compile_options(manifoldjs PRIVATE -fexceptions)
 
@@ -36,20 +32,18 @@ target_link_options(
     --pre-js
     ${CMAKE_CURRENT_SOURCE_DIR}/bindings.js
     --bind
-    --no-entry
     -sALLOW_TABLE_GROWTH=1
     -sEXPORTED_RUNTIME_METHODS=addFunction,removeFunction,FS
     -sMODULARIZE=1
     -sEXPORT_ES6=$<BOOL:${MANIFOLD_JS_ESM}>
     -sEXPORT_NAME=ManifoldModule
+    --no-entry
     -fexceptions
     -sDISABLE_EXCEPTION_CATCHING=0
     -sSTACK_SIZE=8MB
 )
 
 set_target_properties(manifoldjs PROPERTIES OUTPUT_NAME "manifold")
-
-file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/built)
 
 # ensure that interface files are copied over when modified
 add_custom_target(
@@ -65,12 +59,4 @@ add_custom_command(
   COMMAND
     ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/manifold.*
     ${CMAKE_CURRENT_SOURCE_DIR}
-  # copy WASM build and TS declarations for Vite to package into ManifoldCAD.org
-  COMMAND
-    ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/manifold*
-    ${CMAKE_CURRENT_SOURCE_DIR}/examples/built/
-  # copy TS declarations to public so they can be accessed by our editor
-  COMMAND
-    ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/manifold*.d.ts
-    ${CMAKE_CURRENT_SOURCE_DIR}/examples/public/
 )

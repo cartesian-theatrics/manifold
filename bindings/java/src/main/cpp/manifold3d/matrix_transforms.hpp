@@ -1,6 +1,6 @@
 #pragma once
 
-#include <linalg.h>    // https://github.com/sgorsten/linalg
+#include "manifold/linalg.h"    // https://github.com/sgorsten/linalg
 #include <cmath>       // for std::sin, std::cos
 
 namespace MatrixTransforms {

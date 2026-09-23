@@ -61,10 +61,14 @@ Module.setup = function() {
     const result = new Module.Vector2_vec2();
     for (const poly of polygons) {
       const points = toVec(new Module.Vector_vec2(), poly, p => {
-          if (p instanceof Array) return {x: p[0], y: p[1]};
-          return p;
-        });
-      try { result.push_back(points); } finally { points.delete(); }
+        if (p instanceof Array) return {x: p[0], y: p[1]};
+        return p;
+      });
+      try {
+        result.push_back(points);
+      } finally {
+        points.delete();
+      }
     }
     return result;
   }
@@ -99,7 +103,10 @@ Module.setup = function() {
   }
 
   function joinTypeToInt(joinType) {
-    return joinType == 'Round' ? 1 : joinType == 'Miter' ? 2 : /* Square */ 0;
+    return joinType == 'Round' ? 1 :
+        joinType == 'Miter'    ? 2 :
+        joinType == 'Bevel'    ? 3 :
+                                 /* Square */ 0;
   }
 
   // CrossSection methods
@@ -142,8 +149,11 @@ Module.setup = function() {
       setValue(vec2Ptr, vert[0], 'double');
       setValue(vec2Ptr + 8, vert[1], 'double');
     }, 'vi');
-    try { return this._Warp(wasmFuncPtr); }
-    finally { removeFunction(wasmFuncPtr); }
+    try {
+      return this._Warp(wasmFuncPtr);
+    } finally {
+      removeFunction(wasmFuncPtr);
+    }
   };
 
   Module.CrossSection.prototype.decompose = function() {
@@ -162,9 +172,13 @@ Module.setup = function() {
   };
 
   Module.CrossSection.prototype.offset = function(
-      delta, joinType = 'Square', miterLimit = 2.0, circularSegments = 0) {
+      delta, joinType = 'Round', miterLimit = 2.0, circularSegments = 0) {
     return this._Offset(
         delta, joinTypeToInt(joinType), miterLimit, circularSegments);
+  };
+
+  Module.CrossSection.prototype.simplify = function(epsilon = 1e-6) {
+    return this._Simplify(epsilon);
   };
 
   Module.CrossSection.prototype.extrude = function(
@@ -173,18 +187,27 @@ Module.setup = function() {
     scaleTop = vararg2vec2([scaleTop]);
     const polygons = this._ToPolygons();
     try {
-      const man = Module._Extrude(polygons, height, nDivisions, twistDegrees, scaleTop);
+      const man =
+          Module._Extrude(polygons, height, nDivisions, twistDegrees, scaleTop);
       if (!center) return man;
-      try { return man.translate([0., 0., -height / 2.]); }
-      finally { man.delete(); }
-    } finally { polygons.delete(); }
+      try {
+        return man.translate([0., 0., -height / 2.]);
+      } finally {
+        man.delete();
+      }
+    } finally {
+      polygons.delete();
+    }
   };
 
   Module.CrossSection.prototype.revolve = function(
       circularSegments = 0, revolveDegrees = 360.0) {
     const polygons = this._ToPolygons();
-    try { return Module._Revolve(polygons, circularSegments, revolveDegrees); }
-    finally { polygons.delete(); }
+    try {
+      return Module._Revolve(polygons, circularSegments, revolveDegrees);
+    } finally {
+      polygons.delete();
+    }
   };
 
   Module.CrossSection.prototype.add = function(other) {
@@ -209,7 +232,7 @@ Module.setup = function() {
   // Manifold methods
 
   Module.Manifold.prototype.smoothOut = function(
-      minSharpAngle = 60, minSmoothness = 0) {
+      minSharpAngle = 52.5, minSmoothness = 0) {
     return this._SmoothOut(minSharpAngle, minSmoothness);
   };
 
@@ -225,20 +248,48 @@ Module.setup = function() {
       setValue(vec3Ptr + 16, vert[2], 'double');
     }, 'vi');
     let out;
-    try { out = this._Warp(wasmFuncPtr); }
-    finally { removeFunction(wasmFuncPtr); }
+    try {
+      out = this._Warp(wasmFuncPtr);
+    } finally {
+      removeFunction(wasmFuncPtr);
+    }
 
     const status = out.status();
-    if (status.value !== 0) {
+    if (status !== 'NoError') {
       out.delete();
-      throw new Module.ManifoldError(status.value);
+      throw new Module.ManifoldError(status);
+    }
+    return out;
+  };
+
+  Module.Manifold.prototype.warpBatch = function(func) {
+    const wasmFuncPtr = addFunction(function(ptr, count) {
+      const heapF64 = Module.HEAPF64 ?? HEAPF64;
+      if (!heapF64) {
+        throw new Error('WASM heap is not initialized (HEAPF64 unavailable)');
+      }
+      const verts = new Float64Array(heapF64.buffer, ptr, count * 3);
+
+      func(verts, count);
+    }, 'vii');
+
+    const out = this._WarpBatch(wasmFuncPtr);
+    removeFunction(wasmFuncPtr);
+
+    const status = out.status();
+    if (status !== 'NoError') {
+      throw new Module.ManifoldError(status);
     }
     return out;
   };
 
   Module.Manifold.prototype.calculateNormals = function(
-      normalIdx, minSharpAngle = 60) {
+      normalIdx = 0, minSharpAngle = 52.5) {
     return this._CalculateNormals(normalIdx, minSharpAngle);
+  };
+
+  Module.Manifold.prototype.smoothByNormals = function(normalIdx = 0) {
+    return this._SmoothByNormals(normalIdx);
   };
 
   Module.Manifold.prototype.setProperties = function(numProp, func) {
@@ -263,8 +314,11 @@ Module.setup = function() {
         setValue(newPtr + 8 * i, newProp[i], 'double');
       }
     }, 'viii');
-    try { return this._SetProperties(numProp, wasmFuncPtr); }
-    finally { removeFunction(wasmFuncPtr); }
+    try {
+      return this._SetProperties(numProp, wasmFuncPtr);
+    } finally {
+      removeFunction(wasmFuncPtr);
+    }
   };
 
   Module.Manifold.prototype.translate = function(...vec) {
@@ -309,6 +363,20 @@ Module.setup = function() {
     return result;
   };
 
+  Module.Manifold.prototype.rayCast = function(origin, endpoint) {
+    const vec = this._RayCast(vararg2vec3([origin]), vararg2vec3([endpoint]));
+    const result =
+        fromVec(vec, hit => ({
+                       faceID: hit.faceID,
+                       distance: hit.distance,
+                       position: ['x', 'y', 'z'].map(f => hit.position[f]),
+                       normal: ['x', 'y', 'z'].map(f => hit.normal[f]),
+                     }));
+    vec.delete();
+    return result;
+  };
+
+
   Module.Manifold.prototype.split = function(manifold) {
     const vec = this._Split(manifold);
     const result = fromVec(vec);
@@ -338,6 +406,10 @@ Module.setup = function() {
     };
   };
 
+  Module.Manifold.prototype.simplify = function(tolerance = 0) {
+    return this._Simplify(tolerance);
+  };
+
   class Mesh {
     constructor({
       numProp = 3,
@@ -349,7 +421,9 @@ Module.setup = function() {
       runOriginalID,
       faceID,
       halfedgeTangent,
-      runTransform
+      runTransform,
+      runFlags,
+      tolerance = 0
     } = {}) {
       this.numProp = numProp;
       this.triVerts = triVerts;
@@ -361,6 +435,8 @@ Module.setup = function() {
       this.faceID = faceID;
       this.halfedgeTangent = halfedgeTangent;
       this.runTransform = runTransform;
+      this.runFlags = runFlags;
+      this.tolerance = tolerance;
     }
 
     get numTri() {
@@ -409,6 +485,16 @@ Module.setup = function() {
       mat4[15] = 1;
       return mat4;
     }
+
+    backside(run) {
+      return this.runFlags != null && run < this.runFlags.length &&
+          (this.runFlags[run] & 1) !== 0;
+    }
+
+    hasNormals(run) {
+      return this.runFlags != null && run < this.runFlags.length &&
+          (this.runFlags[run] & 2) !== 0;
+    }
   }
 
   Module.Mesh = Mesh;
@@ -420,37 +506,45 @@ Module.setup = function() {
   Module.ManifoldError = function ManifoldError(code, ...args) {
     let message = 'Unknown error';
     switch (code) {
-      case Module.status.NonFiniteVertex.value:
+      case 'NonFiniteVertex':
         message = 'Non-finite vertex';
         break;
-      case Module.status.NotManifold.value:
+      case 'NotManifold':
         message = 'Not manifold';
         break;
-      case Module.status.VertexOutOfBounds.value:
+      case 'VertexOutOfBounds':
         message = 'Vertex index out of bounds';
         break;
-      case Module.status.PropertiesWrongLength.value:
+      case 'PropertiesWrongLength':
         message = 'Properties have wrong length';
         break;
-      case Module.status.MissingPositionProperties.value:
+      case 'MissingPositionProperties':
         message = 'Less than three properties';
         break;
-      case Module.status.MergeVectorsDifferentLengths.value:
+      case 'MergeVectorsDifferentLengths':
         message = 'Merge vectors have different lengths';
         break;
-      case Module.status.MergeIndexOutOfBounds.value:
+      case 'MergeIndexOutOfBounds':
         message = 'Merge index out of bounds';
         break;
-      case Module.status.TransformWrongLength.value:
+      case 'TransformWrongLength':
         message = 'Transform vector has wrong length';
         break;
-      case Module.status.RunIndexWrongLength.value:
+      case 'RunIndexWrongLength':
         message = 'Run index vector has wrong length';
         break;
-      case Module.status.FaceIDWrongLength.value:
+      case 'FaceIDWrongLength':
         message = 'Face ID vector has wrong length';
-      case Module.status.InvalidConstruction.value:
+        break;
+      case 'InvalidConstruction':
         message = 'Manifold constructed with invalid parameters';
+        break;
+      case 'ResultTooLarge':
+        message = 'Result exceeds maximum size';
+        break;
+      case 'InvalidTangents':
+        message = 'Invalid halfedge tangents';
+        break;
     }
 
     const base = Error.apply(this, [message, ...args]);
@@ -559,9 +653,9 @@ Module.setup = function() {
     const manifold = new ManifoldCtor(mesh);
 
     const status = manifold.status();
-    if (status.value !== 0) {
+    if (status !== 'NoError') {
       manifold.delete();
-      throw new Module.ManifoldError(status.value);
+      throw new Module.ManifoldError(status);
     }
 
     return manifold;
@@ -627,14 +721,6 @@ Module.setup = function() {
     return Module._ReserveIDs(n);
   };
 
-  Module.Manifold.compose = function(manifolds) {
-    const vec = new Module.Vector_manifold();
-    toVec(vec, manifolds);
-    const result = Module._manifoldCompose(vec);
-    vec.delete();
-    return result;
-  };
-
   function manifoldBatchbool(name) {
     return function(...args) {
       if (args.length == 1) args = args[0];
@@ -647,6 +733,10 @@ Module.setup = function() {
   }
 
   Module.Manifold.union = manifoldBatchbool('Union');
+  // Aliasing compose to union.
+  // Native compose has some issues, and is deprecated.
+  Module.Manifold.compose = Module.Manifold.union;
+
   Module.Manifold.difference = manifoldBatchbool('Difference');
   Module.Manifold.intersection = manifoldBatchbool('Intersection');
 
@@ -665,6 +755,40 @@ Module.setup = function() {
     }, 'di');
     const out =
         Module._LevelSet(wasmFuncPtr, bounds2, edgeLength, level, tolerance);
+    removeFunction(wasmFuncPtr);
+    return out;
+  };
+
+  // ctx-aware static factories: mirror Manifold.ofMesh / smooth / levelSet but
+  // run under this ExecutionContext so progress/cancellation are observed.
+  Module.ExecutionContext.prototype.fromMesh = function(mesh) {
+    return this._FromMesh(mesh);
+  };
+
+  Module.ExecutionContext.prototype.smooth = function(
+      mesh, sharpenedEdges = []) {
+    const sharp = new Module.Vector_smoothness();
+    toVec(sharp, sharpenedEdges);
+    const result = this._Smooth(mesh, sharp);
+    sharp.delete();
+    return result;
+  };
+
+  Module.ExecutionContext.prototype.levelSet = function(
+      sdf, bounds, edgeLength, level = 0, tolerance = -1) {
+    const bounds2 = {
+      min: {x: bounds.min[0], y: bounds.min[1], z: bounds.min[2]},
+      max: {x: bounds.max[0], y: bounds.max[1], z: bounds.max[2]},
+    };
+    const wasmFuncPtr = addFunction(function(vec3Ptr) {
+      const x = getValue(vec3Ptr, 'double');
+      const y = getValue(vec3Ptr + 8, 'double');
+      const z = getValue(vec3Ptr + 16, 'double');
+      const vert = [x, y, z];
+      return sdf(vert);
+    }, 'di');
+    const out =
+        this._LevelSet(wasmFuncPtr, bounds2, edgeLength, level, tolerance);
     removeFunction(wasmFuncPtr);
     return out;
   };
@@ -708,10 +832,11 @@ Module.setup = function() {
 
   // Top-level functions
 
-  Module.triangulate = function(polygons, epsilon = -1) {
+  Module.triangulate = function(polygons, epsilon = -1, allowConvex = true) {
     const polygonsVec = polygons2vec(polygons);
     const result = fromVec(
-        Module._Triangulate(polygonsVec, epsilon), (x) => [x[0], x[1], x[2]]);
+        Module._Triangulate(polygonsVec, epsilon, allowConvex),
+        (x) => [x[0], x[1], x[2]]);
     disposePolygons(polygonsVec);
     return result;
   };

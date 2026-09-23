@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <algorithm>
-
-#include "../src/tri_dist.h"
 #include "manifold/manifold.h"
 #include "samples.h"
 #include "test.h"
@@ -28,7 +25,6 @@ bool isMeshConvex(Manifold hullManifold, double epsilon = 0.0000001) {
 
   const auto numTri = mesh.NumTri();
   const auto numVert = mesh.NumVert();
-  const auto numProp = mesh.numProp;
 
   // Iterate over each triangle
   for (size_t t = 0; t < numTri; ++t) {
@@ -75,11 +71,7 @@ TEST(Hull, Tictac) {
                                       sphere.Translate({0, 0, tictacMid})};
   const auto tictac = Manifold::Hull(spheres);
 
-#ifdef MANIFOLD_EXPORT
-  if (options.exportModels) {
-    ExportMesh("tictac_hull.glb", tictac.GetMeshGL(), {});
-  }
-#endif
+  if (options.exportModels) WriteTestOBJ("tictac_hull.obj", tictac);
 
   EXPECT_NEAR(sphere.NumVert() + tictacSeg, tictac.NumVert(), 1);
 }
@@ -103,10 +95,10 @@ TEST(Hull, Cube) {
 
 TEST(Hull, Empty) {
   const std::vector<vec3> tooFew{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
-  EXPECT_TRUE(Manifold::Hull(tooFew).AsOriginal().IsEmpty());
+  EXPECT_TRUE(Manifold::Hull(tooFew).Simplify().IsEmpty());
 
   const std::vector<vec3> coplanar{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {1, 1, 0}};
-  EXPECT_TRUE(Manifold::Hull(coplanar).AsOriginal().IsEmpty());
+  EXPECT_TRUE(Manifold::Hull(coplanar).Simplify().IsEmpty());
 }
 
 TEST(Hull, MengerSponge) {
@@ -150,11 +142,7 @@ TEST(Hull, FailingTest1) {
       {-20.442623138f, -35.407661438f, 8.2749996185f},
       {10.229375839f, -14.717799187f, 10.508025169f}};
   auto hull = Manifold::Hull(hullPts);
-#ifdef MANIFOLD_EXPORT
-  if (options.exportModels) {
-    ExportMesh("failing_test1.glb", hull.GetMeshGL(), {});
-  }
-#endif
+  if (options.exportModels) WriteTestOBJ("failing_test1.obj", hull);
   EXPECT_TRUE(isMeshConvex(hull, 1.09375e-05));
 }
 
@@ -183,11 +171,7 @@ TEST(Hull, FailingTest2) {
       {174.17001343f, -19.502000809f, 29.562002182f},
       {190.06401062f, -0.81000006199f, -14.250000954f}};
   auto hull = Manifold::Hull(hullPts);
-#ifdef MANIFOLD_EXPORT
-  if (options.exportModels) {
-    ExportMesh("failing_test2.glb", hull.GetMeshGL(), {});
-  }
-#endif
+  if (options.exportModels) WriteTestOBJ("failing_test2.obj", hull);
   EXPECT_TRUE(isMeshConvex(hull, 2.13966e-05));
 }
 
@@ -207,11 +191,74 @@ TEST(Hull, DisabledFaceTest) {
       {29.590316772, 20.917686462, 73.143547058},
       {101.61526489, 98.461585999, 30.909877777}};
   auto hull = Manifold::Hull(hullPts);
-#ifdef MANIFOLD_EXPORT
-  if (options.exportModels) {
-    ExportMesh("disabledFaceTest.glb", hull.GetMeshGL(), {});
-  }
-#endif
+  if (options.exportModels) WriteTestOBJ("disabledFaceTest.obj", hull);
   EXPECT_TRUE(!hull.IsEmpty());
   EXPECT_TRUE(isMeshConvex(hull));
+}
+
+TEST(Hull, Degenerate2D) {
+  // issue 1491
+  // note that we need 5 points to trigger this bug
+  Manifold hull = Manifold::Hull({
+      {0.0, 0.0, 0.0},
+      {0.0, 0.0, 1.0},
+      {0.5, 0.0, 0.0},
+      {0.5, 0.0, 0.0},
+      {0.5, 0.0, 1.0},
+  });
+  EXPECT_TRUE(!hull.IsEmpty());
+
+  EXPECT_FLOAT_EQ(hull.BoundingBox().min.x, 0.0);
+  EXPECT_FLOAT_EQ(hull.BoundingBox().min.y, 0.0);
+  EXPECT_FLOAT_EQ(hull.BoundingBox().min.z, 0.0);
+
+  EXPECT_FLOAT_EQ(hull.BoundingBox().max.x, 0.5);
+  EXPECT_FLOAT_EQ(hull.BoundingBox().max.y, 0.0);
+  EXPECT_FLOAT_EQ(hull.BoundingBox().max.z, 1.0);
+
+  EXPECT_FLOAT_EQ(hull.Volume(), 0.0);
+}
+
+TEST(Hull, Degenerate1D) {
+  Manifold hull = Manifold::Hull({
+      {0.0, 0.0, 0.0},
+      {0.0, 0.0, 0.0},
+      {0.5, 0.0, 0.0},
+      {0.5, 0.0, 0.0},
+      {0.5, 0.0, 0.0},
+  });
+  EXPECT_TRUE(!hull.IsEmpty());
+
+  EXPECT_FLOAT_EQ(hull.BoundingBox().min.x, 0.0);
+  EXPECT_FLOAT_EQ(hull.BoundingBox().min.y, 0.0);
+  EXPECT_FLOAT_EQ(hull.BoundingBox().min.z, 0.0);
+
+  EXPECT_FLOAT_EQ(hull.BoundingBox().max.x, 0.5);
+  EXPECT_FLOAT_EQ(hull.BoundingBox().max.y, 0.0);
+  EXPECT_FLOAT_EQ(hull.BoundingBox().max.z, 0.0);
+
+  EXPECT_FLOAT_EQ(hull.Volume(), 0.0);
+}
+
+TEST(Hull, NotEnoughPoints) {
+  Manifold hull = Manifold::Hull({
+      {0.0, 0.0, 0.0},
+      {0.5, 0.0, 0.0},
+  });
+  EXPECT_TRUE(!hull.IsEmpty());
+
+  EXPECT_FLOAT_EQ(hull.BoundingBox().min.x, 0.0);
+  EXPECT_FLOAT_EQ(hull.BoundingBox().min.y, 0.0);
+  EXPECT_FLOAT_EQ(hull.BoundingBox().min.z, 0.0);
+
+  EXPECT_FLOAT_EQ(hull.BoundingBox().max.x, 0.5);
+  EXPECT_FLOAT_EQ(hull.BoundingBox().max.y, 0.0);
+  EXPECT_FLOAT_EQ(hull.BoundingBox().max.z, 0.0);
+
+  EXPECT_FLOAT_EQ(hull.Volume(), 0.0);
+}
+
+TEST(Hull, EmptyHull) {
+  Manifold hull = Manifold::Hull(std::vector<vec3>());
+  EXPECT_TRUE(hull.IsEmpty());
 }

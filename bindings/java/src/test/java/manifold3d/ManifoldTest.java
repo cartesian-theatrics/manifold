@@ -1,10 +1,12 @@
 package manifold3d;
 
 import org.junit.Test;
+import org.junit.Rule;
+import org.junit.rules.TemporaryFolder;
 import manifold3d.Manifold;
 import manifold3d.linalg.DoubleMat3x4;
 import manifold3d.linalg.DoubleMat3x4Vector;
-import manifold3d.pub.DoubleMesh;
+import manifold3d.manifold.MeshGL;
 import manifold3d.linalg.DoubleVec3;
 import manifold3d.linalg.DoubleVec2;
 import manifold3d.linalg.DoubleVec3Vector;
@@ -17,12 +19,14 @@ import java.nio.DoubleBuffer;
 
 public class ManifoldTest {
 
+    @Rule public TemporaryFolder output = new TemporaryFolder();
+
     public ManifoldTest() {}
 
     @Test
-    public void testManifold() {
+    public void testManifold() throws Exception {
         // Existing test code
-        DoubleMesh mesh = new DoubleMesh();
+        MeshGL mesh = new MeshGL();
         Manifold manifold = new Manifold(mesh);
 
         Manifold sphere = Manifold.Sphere(10.0f, 20);
@@ -33,35 +37,34 @@ public class ManifoldTest {
         Manifold intersection = cube.intersect(sphere);
         Manifold union = cube.add(sphere);
 
-        DoubleMesh diffMesh = diff.getMesh();
-        DoubleMesh intersectMesh = intersection.getMesh();
-        DoubleMesh unionMesh = union.getMesh();
+        MeshGL diffMesh = diff.getMesh();
+        MeshGL intersectMesh = intersection.getMesh();
+        MeshGL unionMesh = union.getMesh();
         ExportOptions opts = new ExportOptions();
         opts.faceted(false);
 
-        MeshIO.ExportMesh("CubeMinusSphere.stl", diffMesh, opts);
-        MeshIO.ExportMesh("CubeIntersectSphere.glb", intersectMesh, opts);
-        MeshIO.ExportMesh("CubeUnionSphere.obj", unionMesh, opts);
+        MeshIO.ExportMesh(output.newFile("CubeMinusSphere.stl").getAbsolutePath(), diffMesh, opts);
+        MeshIO.ExportMesh(output.newFile("CubeIntersectSphere.glb").getAbsolutePath(), intersectMesh, opts);
+        MeshIO.ExportMesh(output.newFile("CubeUnionSphere.obj").getAbsolutePath(), unionMesh, opts);
 
         Manifold hull = cylinder.convexHull(cube.translateZ(100.0));
-        DoubleMesh hullMesh = hull.getMesh();
+        MeshGL hullMesh = hull.getMesh();
 
-        MeshIO.ExportMesh("hull.glb", hullMesh, opts);
-        assert hull.getProperties().volume() > 0.0;
+        MeshIO.ExportMesh(output.newFile("hull.glb").getAbsolutePath(), hullMesh, opts);
+        assert hull.volume() > 0.0;
 
-        DoubleMat3x4 frame1 = new DoubleMat3x4(1).translate(new DoubleVec3(20, 0, 0));
-        DoubleMat3x4 frame2 = new DoubleMat3x4(1)
-                .rotate(new DoubleVec3(0, -3.14, 0))
-                .translate(new DoubleVec3(20, 0, 0));
+        DoubleMat3x4 frame1 = DoubleMat3x4.IdentityMat().translate(new DoubleVec3(20, 0, 0));
+        DoubleMat3x4 frame2 = DoubleMat3x4.IdentityMat()
+                .translate(new DoubleVec3(20, 0, 30));
         CrossSection section1 = CrossSection.Square(new DoubleVec2(20, 20), true);
         CrossSection section2 = CrossSection.Circle(15, 20);
         Manifold loft = MeshUtils.Loft(new CrossSectionVector(section1, section2),
                                        new DoubleMat3x4Vector(frame1, frame2),
                                        MeshUtils.LoftAlgorithm.EagerNearestNeighbor);
 
-        assert loft.getProperties().volume() > 0.0;
+        assert loft.volume() > 0.0;
 
-        DoubleVec3Vector vertPos = hullMesh.vertPos();
+
 
         // New test code: Creating a simple texture and exporting a GLB file
         // Define the dimensions of the height map
@@ -86,10 +89,10 @@ public class ManifoldTest {
 
         //System.out.println(texturedSurface.status());
         // Export the Manifold to a GLB file
-        DoubleMesh texturedMesh = texturedSurface.getMesh();
-        MeshIO.ExportMesh("TexturedSurface.glb", texturedMesh, opts);
+        MeshGL texturedMesh = texturedSurface.getMesh();
+        MeshIO.ExportMesh(output.newFile("TexturedSurface.glb").getAbsolutePath(), texturedMesh, opts);
 
         // Verify that the Manifold has a positive volume
-        assert texturedSurface.getProperties().volume() > 0.0;
+        assert texturedSurface.volume() > 0.0;
     }
 }

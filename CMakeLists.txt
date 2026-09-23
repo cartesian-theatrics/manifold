@@ -22,13 +22,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
+include(CTest)
+enable_testing()
 include(GNUInstallDirs)
 include(CMakeDependentOption)
 
 # Define Manifold version
 set(MANIFOLD_VERSION_MAJOR 3)
-set(MANIFOLD_VERSION_MINOR 0)
-set(MANIFOLD_VERSION_PATCH 0)
+set(MANIFOLD_VERSION_MINOR 5)
+set(MANIFOLD_VERSION_PATCH 3)
 set(
   MANIFOLD_VERSION
   "${MANIFOLD_VERSION_MAJOR}.${MANIFOLD_VERSION_MINOR}.${MANIFOLD_VERSION_PATCH}"
@@ -36,13 +38,42 @@ set(
 
 # Primary user facing options
 option(MANIFOLD_CROSS_SECTION "Build CrossSection for 2D support" ON)
+set(
+  MANIFOLD_CROSS_SECTION_BACKEND
+  "clipper2"
+  CACHE STRING
+        "CrossSection backend to build: clipper2 or experimental boolean2"
+)
+set_property(
+  CACHE MANIFOLD_CROSS_SECTION_BACKEND
+  PROPERTY STRINGS clipper2 boolean2
+)
+mark_as_advanced(MANIFOLD_CROSS_SECTION_BACKEND)
+if(MANIFOLD_CROSS_SECTION)
+  if(
+    NOT MANIFOLD_CROSS_SECTION_BACKEND STREQUAL "clipper2"
+    AND NOT MANIFOLD_CROSS_SECTION_BACKEND STREQUAL "boolean2"
+  )
+    message(
+      FATAL_ERROR
+        "MANIFOLD_CROSS_SECTION_BACKEND must be 'clipper2' or 'boolean2'"
+    )
+  endif()
+endif()
 option(MANIFOLD_DEBUG "Enable debug tracing/timing" OFF)
+option(MANIFOLD_ASSERT "Enable assertions - requires MANIFOLD_DEBUG" OFF)
+option(MANIFOLD_TIMING "Enable Boolean3 phase timing without debug overhead" OFF)
+option(MANIFOLD_STRICT "Treat compile warnings as fatal build errors" OFF)
+option(
+  MANIFOLD_NO_IOSTREAM
+  "Strip iostream- and filesystem-using bits from the public API and tests; useful for freestanding/embedded builds. When ON, defines both MANIFOLD_NO_IOSTREAM and MANIFOLD_NO_FILESYSTEM."
+  OFF
+)
 option(
   MANIFOLD_DOWNLOADS
   "Allow Manifold build to download missing dependencies"
   ON
 )
-option(MANIFOLD_EXPORT "Build mesh export (via assimp) utility library" OFF)
 option(MANIFOLD_PAR "Enable Parallel backend" OFF)
 option(
   MANIFOLD_OPTIMIZED
@@ -90,24 +121,38 @@ set(MANIFOLD_FLAGS "" CACHE STRING "Manifold compiler flags")
 option(TRACY_ENABLE "Use tracy profiling" OFF)
 option(TRACY_MEMORY_USAGE "Track memory allocation with tracy (expensive)" OFF)
 option(MANIFOLD_FUZZ "Enable fuzzing tests" OFF)
+option(MANIFOLD_EXPORT "Build legacy JNI mesh import/export" OFF)
+option(ASSIMP_ENABLE "Enable ASSIMP for utilities in extras" OFF)
 mark_as_advanced(TRACY_ENABLE)
 mark_as_advanced(TRACY_MEMORY_USAGE)
 mark_as_advanced(MANIFOLD_FUZZ)
+mark_as_advanced(ASSIMP_ENABLE)
+
+# MANIFOLD_NO_IOSTREAM strips iostream- and filesystem-using bits
+# from the public API and from the test files that use them.
+# Incompatible with options that emit diagnostic output via iostream:
+# MANIFOLD_DEBUG and MANIFOLD_TIMING (both use std::cout).
+# MANIFOLD_TEST=ON is supported — iostream-using TEST(...) blocks
+# in manifold_test/polygon_test/manifoldc_test are gated out under
+# the macro; the test executable still builds and runs the rest.
+if(MANIFOLD_NO_IOSTREAM AND (MANIFOLD_DEBUG OR MANIFOLD_TIMING))
+  message(FATAL_ERROR
+    "MANIFOLD_NO_IOSTREAM is incompatible with MANIFOLD_DEBUG / MANIFOLD_TIMING "
+    "(those options use std::cout for diagnostic output).")
+endif()
 
 # Always build position independent code for relocatability
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Various Compiler Flags
 if(MANIFOLD_FUZZ)
-  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    message(FATAL_ERROR "fuzztest only supports clang")
-  endif()
   # we should enable debug checks
   set(MANIFOLD_DEBUG ON)
   # enable fuzztest fuzzing mode
   set(FUZZTEST_FUZZING_MODE ON)
   # address sanitizer required
   add_compile_options(-fsanitize=address)
+  add_link_options(-fsanitize=address)
 endif()
 
 if(TRACY_ENABLE)
@@ -147,7 +192,10 @@ if(CMAKE_EXPORT_COMPILE_COMMANDS AND NOT EMSCRIPTEN)
 endif()
 
 if(MSVC)
-  list(APPEND MANIFOLD_FLAGS /DNOMINMAX /bigobj)
+  list(APPEND MANIFOLD_FLAGS /DNOMINMAX /bigobj /fp:precise)
+  if(MANIFOLD_STRICT)
+    list(APPEND MANIFOLD_FLAGS /WX)
+  endif()
 else()
   list(
     APPEND
@@ -156,14 +204,19 @@ else()
     -Wno-unknown-warning-option
     -Wno-unused
     -Wno-shorten-64-to-32
+    -Wno-sign-compare
+    -Wno-alloc-size-larger-than
   )
   if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
       list(APPEND WARNING_FLAGS -Wno-format)
     endif()
   elseif(PROJECT_IS_TOP_LEVEL)
-    # only do -Werror if we are the top level project
-    list(APPEND WARNING_FLAGS -Werror)
+    # only do -Werror if we are the top level project and
+    # MANIFOLD_STRICT is on
+    if(MANIFOLD_STRICT)
+      list(APPEND WARNING_FLAGS -Werror)
+    endif()
   endif()
   list(APPEND MANIFOLD_FLAGS ${WARNING_FLAGS})
   if(
@@ -175,6 +228,17 @@ else()
   endif()
   if("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo")
     list(APPEND MANIFOLD_FLAGS -fno-omit-frame-pointer)
+  endif()
+  # disable fp math optimizations, e.g. FMA for supported architectures, as
+  # this changes floating-point results
+  include(CheckCXXCompilerFlag)
+  check_cxx_compiler_flag(-ffp-contract=off HAS_FP_CONTRACT)
+  check_cxx_compiler_flag(-fexcess-precision=standard HAS_FP_PRECISION)
+  if(HAS_FP_CONTRACT)
+    list(APPEND MANIFOLD_FLAGS -ffp-contract=off)
+  endif()
+  if(HAS_FP_PRECISION)
+    list(APPEND MANIFOLD_FLAGS -fexcess-precision=standard)
   endif()
   if(CODE_COVERAGE)
     list(
@@ -204,7 +268,6 @@ if("${isSystemDir}" STREQUAL "-1")
   set(CMAKE_INSTALL_RPATH ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR})
 endif("${isSystemDir}" STREQUAL "-1")
 
-message(STATUS "TESTING")
 include(${PROJECT_SOURCE_DIR}/cmake/manifoldDeps.cmake)
 include(${PROJECT_SOURCE_DIR}/cmake/configHelper.cmake)
 
@@ -214,6 +277,9 @@ if(MANIFOLD_TEST)
   add_subdirectory(samples)
   add_subdirectory(test)
   add_subdirectory(extras)
+  if(MANIFOLD_CROSS_SECTION AND NOT EMSCRIPTEN)
+    include(bindings/java/native-tests.cmake)
+  endif()
 endif()
 
 include(${PROJECT_SOURCE_DIR}/cmake/info.cmake)
@@ -231,11 +297,6 @@ set_source_files_properties(
   PROPERTIES GENERATED TRUE
 )
 
-# If it's an EMSCRIPTEN build, we're done
-if(EMSCRIPTEN)
-  return()
-endif()
-
 # CMake exports
 configure_file(
   cmake/manifoldConfig.cmake.in
@@ -249,11 +310,9 @@ write_basic_package_version_file(
   COMPATIBILITY SameMajorVersion
 )
 
-install(TARGETS TextToPolygon EXPORT manifoldTargets)
-target_link_libraries(manifold PUBLIC TextToPolygon)
-
 # Location of inputs for CMake find_package - see:
 # https://cmake.org/cmake/help/latest/command/find_package.html
+install(TARGETS TextToPolygon EXPORT manifoldTargets)
 set(EXPORT_INSTALL_DIR ${CMAKE_INSTALL_LIBDIR}/cmake)
 
 install(
@@ -272,13 +331,14 @@ install(
 set(
   MANIFOLD_PUBLIC_HDRS
   common.h
+  math.h
+  mesh.h
   linalg.h
   manifold.h
   optional_assert.h
   polygon.h
   vec_view.h
   $<$<BOOL:${MANIFOLD_CROSS_SECTION}>:cross_section.h>
-  $<$<BOOL:${MANIFOLD_EXPORT}>:meshIO.h>
 )
 list(TRANSFORM MANIFOLD_PUBLIC_HDRS PREPEND include/manifold/)
 list(
@@ -296,7 +356,7 @@ install(
 if(MANIFOLD_PAR)
   set(TEMPLATE_OPTIONAL_TBB "tbb")
 endif()
-if(MANIFOLD_CROSS_SECTION)
+if(MANIFOLD_CROSS_SECTION AND MANIFOLD_CROSS_SECTION_BACKEND STREQUAL "clipper2")
   set(TEMPLATE_OPTIONAL_CLIPPER "Clipper2")
 endif()
 configure_file(

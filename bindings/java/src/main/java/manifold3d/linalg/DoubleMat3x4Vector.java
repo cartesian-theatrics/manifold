@@ -17,7 +17,7 @@ import java.util.Iterator;
 import java.lang.Iterable;
 import java.util.NoSuchElementException;
 
-@Platform(compiler = "cpp17", include = {"<vector>", "linalg.h"})
+@Platform(compiler = "cpp17", include = {"<vector>", "manifold/linalg.h"})
 @Name("std::vector<linalg::mat<double, 3, 4>>")
 public class DoubleMat3x4Vector extends Pointer implements Iterable<DoubleMat3x4> {
     static { Loader.load(); }

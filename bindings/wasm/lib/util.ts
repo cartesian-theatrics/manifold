@@ -1,0 +1,222 @@
+// Copyright 2025 The Manifold Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @group ManifoldCAD
+ * @packageDocumentation
+ */
+
+import {originalPositionFor, TraceMap} from '@jridgewell/trace-mapping';
+import convert from 'convert-source-map';
+
+import {FetchError} from './error.ts';
+
+/**
+ * Are we in a web worker?
+ *
+ * @returns A boolean.
+ */
+export const isWebWorker = (): boolean =>
+    typeof self !== 'undefined' && typeof self.document == 'undefined';
+
+/**
+ * Are we in Node?
+ *
+ * @returns A boolean.
+ */
+export const isNode = (): boolean =>
+    typeof process !== 'undefined' && !!process?.versions?.node;
+
+const parseV8StackTrace = (stack: string) =>
+    stack.split('\n').filter(frame => frame.match(/<anonymous>/)).map(frame => {
+      const matches = frame.matchAll(/:([0-9]+):([0-9]+)\)$/g).next().value;
+      const [line, column] = [parseInt(matches![1]), parseInt(matches![2])];
+      const methodName = frame.match(/^\s+at\s([^\s]+)/)![1];
+      return {
+        line,
+        column,
+        // In Node or Chrome, a function constructor shows as 'eval'.
+        methodName: methodName === 'eval' ? null : methodName
+      };
+    });
+
+const parseSpiderMonkeyStackTrace = (stack: string) =>
+    stack.split('\n')
+        .filter(frame => frame.match(/AsyncFunction/))
+        .map(frame => {
+          const matches =
+              frame.matchAll(/AsyncFunction:([0-9]+):([0-9]+)/g).next().value;
+          const [line, column] = [parseInt(matches![1]), parseInt(matches![2])];
+          const methodName = frame.match(/^[^@]+/)![0];
+          return {
+            line,
+            column,
+            // In Firefox, a function constructor shows as 'anonymous'.
+            methodName: methodName === 'anonymous' ? null : methodName
+          };
+        });
+
+/**
+ * Attempt to parse a stack trace from a dynamically created function.
+ *
+ *  This makes the stack trace more readable at the potential cost of confusion
+ * if a manifoldCAD user is also constructing new Functions within their model.
+ *
+ * @internal
+ */
+export const parseStackTrace = (stack: string) => {
+  if (stack.match(/^\s+at\s/gm)) {
+    // V8 -- Chrome, NodeJS
+    return parseV8StackTrace(stack);
+  } else if (stack.match(/^([^@]+)@/gm)) {
+    // SpiderMonkey -- Firefox
+    return parseSpiderMonkeyStackTrace(stack);
+  } else
+    return [];
+};
+
+export const getSourceMappedStackTrace =
+    (code: string, error: Error, lineOffset: number = 0): string|undefined => {
+      const converter = convert.fromSource(code);
+      if (!converter || !error.stack) {
+        // No inline source map.  We can't do anything.
+        return error.stack
+      }
+      const parsed = parseStackTrace(error.stack);
+      if (!parsed.length) {
+        // We can't parse this.  Chances are, it's someone in Safari.
+        return error.stack
+      }
+      const tracer = new TraceMap(converter!.toObject());
+      const stack = parsed.map(frame => {
+        if ((frame.line! + lineOffset) < 1) {
+          return frame;  // Line number is out of range.
+        }
+        const {line, column, source: file} = originalPositionFor(
+            tracer, {line: frame.line! + lineOffset, column: frame.column!});
+        const {methodName} = frame;
+        // column numbers should be 1 indexed.  Results are 0 indexed.
+        return {line, column: column! + 1, file, methodName};
+      });
+
+      return [
+        error.toString(), ...stack.map((frame: any) => {
+          const location = `${frame.file}:${frame.line}:${frame.column}`;
+          if (frame.methodName) {
+            return `    at ${frame.methodName} (${location})`;
+          } else {
+            return `    at ${location}`;
+          }
+        })
+      ].reduce((acc, cur) => `${acc}\n${cur}`);
+    };
+
+export const findExtension =
+    (extension: string, list: Array<{extension: string}>) => {
+      let match = list.find(entry => entry.extension === extension);
+      if (match) return match;
+      match = list.find(entry => `.${entry.extension}` === extension);
+      if (match) return match;
+
+      // Do we have a filename instead of just an extension?
+      const fileExt = extension.match(/(\.[^\.]+)$/);
+      if (!fileExt) return null;
+
+      const [ext] = fileExt;
+      match = list.find(entry => entry.extension === ext);
+      if (match) return match;
+      match = list.find(entry => `.${entry.extension}` === ext);
+      return match;
+    };
+
+export const findMimeType =
+    (mimetype: string, list: Array<{mimetype: string}>) =>
+        list.find(entry => entry.mimetype === mimetype);
+
+export function formatLength(mm: number): string {
+  if (Math.abs(mm) >= 10000) {
+    return `${
+        (mm / 1000).toLocaleString(undefined, {maximumFractionDigits: 2})} m`;
+  }
+  return `${mm.toLocaleString(undefined, {maximumFractionDigits: 2})} mm`;
+}
+
+export function formatArea(mm2: number): string {
+  const cm2 = mm2 / 100;
+  if (Math.abs(cm2) >= 10000) {
+    return `${(cm2 / 10000).toLocaleString(undefined, {
+      maximumFractionDigits: 2
+    })} m^2`;
+  }
+  return `${cm2.toLocaleString(undefined, {maximumFractionDigits: 2})} cm^2`;
+}
+
+export function formatVolume(mm3: number): string {
+  const cm3 = mm3 / 1000;
+  if (Math.abs(cm3) >= 1_000_000) {
+    return `${(cm3 / 1_000_000).toLocaleString(undefined, {
+      maximumFractionDigits: 2
+    })} m^3`;
+  }
+  return `${cm3.toLocaleString(undefined, {maximumFractionDigits: 2})} cm^3`;
+}
+
+const FETCH_ATTEMPTS = 3;
+const FETCH_BASE_DELAY_MS = 200;
+const FETCH_FACTOR = 3;
+
+const isRetryableStatus = (status: number): boolean =>
+    status >= 500 || status === 429;
+
+const inputToUrl = (input: RequestInfo|URL): string => {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
+
+const delay = (ms: number) =>
+    new Promise<void>(resolve => setTimeout(resolve, ms));
+
+/**
+ * Wraps `fetch` with retry-on-transient-failure and throws `FetchError` on
+ * non-2xx. Retries on HTTP 5xx, HTTP 429, and `TypeError` (network errors
+ * like "Failed to fetch"); returns immediately on other 4xx so typo'd URLs
+ * fail fast. AbortError and other exceptions propagate untouched.
+ *
+ * Exponential backoff: 200ms, 600ms; ~800ms worst-case added latency.
+ */
+export async function fetchWithRetry(
+    input: RequestInfo|URL, init?: RequestInit): Promise<Response> {
+  let response: Response|undefined;
+  for (let attempt = 0;; attempt++) {
+    const isLast = attempt === FETCH_ATTEMPTS - 1;
+    try {
+      response = await fetch(input, init);
+      if (!isRetryableStatus(response.status) || isLast) break;
+    } catch (err) {
+      // TypeError covers "Failed to fetch" / DNS / connection-reset
+      // errors. Retry those unless out of attempts. AbortError and
+      // NotAllowedError propagate untouched.
+      if (!(err instanceof TypeError) || isLast) throw err;
+    }
+    await delay(FETCH_BASE_DELAY_MS * FETCH_FACTOR ** attempt);
+  }
+  // response is assigned on every path that reaches break.
+  const r = response!;
+  if (!r.ok) {
+    throw new FetchError(
+        r.status, r.statusText, inputToUrl(input), await r.text());
+  }
+  return r;
+}

@@ -3,7 +3,7 @@ package manifold3d.linalg;
 import org.bytedeco.javacpp.*;
 import org.bytedeco.javacpp.annotation.*;
 
-@Platform(compiler = "cpp17", include = "linalg.h")
+@Platform(compiler = "cpp17", include = "manifold/linalg.h")
 @Namespace("linalg")
 @Name("vec<double, 4>")
 public class DoubleVec4 extends DoublePointer {

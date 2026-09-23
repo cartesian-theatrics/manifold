@@ -20,7 +20,6 @@
 #include "helpers.cpp"
 #include "manifold/cross_section.h"
 #include "manifold/manifold.h"
-#include "manifold/polygon.h"
 
 #if (MANIFOLD_PAR == 1)
 #include <tbb/parallel_for.h>
@@ -82,7 +81,10 @@ EMSCRIPTEN_BINDINGS(whatever) {
       .value("TransformWrongLength", Manifold::Error::TransformWrongLength)
       .value("RunIndexWrongLength", Manifold::Error::RunIndexWrongLength)
       .value("FaceIDWrongLength", Manifold::Error::FaceIDWrongLength)
-      .value("InvalidConstruction", Manifold::Error::InvalidConstruction);
+      .value("InvalidConstruction", Manifold::Error::InvalidConstruction)
+      .value("ResultTooLarge", Manifold::Error::ResultTooLarge)
+      .value("InvalidTangents", Manifold::Error::InvalidTangents)
+      .value("Cancelled", Manifold::Error::Cancelled);
 
   enum_<CrossSection::FillRule>("fillrule")
       .value("EvenOdd", CrossSection::FillRule::EvenOdd)
@@ -93,7 +95,8 @@ EMSCRIPTEN_BINDINGS(whatever) {
   enum_<CrossSection::JoinType>("jointype")
       .value("Square", CrossSection::JoinType::Square)
       .value("Round", CrossSection::JoinType::Round)
-      .value("Miter", CrossSection::JoinType::Miter);
+      .value("Miter", CrossSection::JoinType::Miter)
+      .value("Bevel", CrossSection::JoinType::Bevel);
 
   value_object<Rect>("rect").field("min", &Rect::min).field("max", &Rect::max);
   value_object<Box>("box").field("min", &Box::min).field("max", &Box::max);
@@ -102,6 +105,24 @@ EMSCRIPTEN_BINDINGS(whatever) {
       .field("halfedge", &Smoothness::halfedge)
       .field("smoothness", &Smoothness::smoothness);
 
+  value_object<RayHit>("rayHit")
+      .field(
+          "faceID", +[](const RayHit& hit) { return double(hit.faceID); },
+          +[](RayHit& hit, double id) { hit.faceID = uint64_t(id); })
+      .field("distance", &RayHit::distance)
+      .field("position", &RayHit::position)
+      .field("normal", &RayHit::normal);
+
+  class_<ExecutionContext>("ExecutionContext")
+      .constructor<>()
+      .function("cancel", &ExecutionContext::Cancel)
+      .function("cancelled", &ExecutionContext::Cancelled)
+      .function("progress", &ExecutionContext::Progress)
+      .function("_FromMesh", &man_js::ExecutionContextFromMesh)
+      .function("_Smooth", &man_js::ExecutionContextSmooth)
+      .function("_LevelSet", &man_js::ExecutionContextLevelSet);
+
+  register_vector<RayHit>("Vector_rayHit");
   register_vector<ivec3>("Vector_ivec3");
   register_vector<vec3>("Vector_vec3");
   register_vector<vec2>("Vector_vec2");
@@ -129,7 +150,7 @@ EMSCRIPTEN_BINDINGS(whatever) {
       .function("numVert", &CrossSection::NumVert)
       .function("numContour", &CrossSection::NumContour)
       .function("_Bounds", &CrossSection::Bounds)
-      .function("simplify", &CrossSection::Simplify)
+      .function("_Simplify", &CrossSection::Simplify)
       .function("_Offset", &cross_js::Offset)
       .function("_ToPolygons", &CrossSection::ToPolygons)
       .function("hull",
@@ -155,6 +176,8 @@ EMSCRIPTEN_BINDINGS(whatever) {
       .function("_Split", &man_js::Split)
       .function("_SplitByPlane", &man_js::SplitByPlane)
       .function("_TrimByPlane", &Manifold::TrimByPlane)
+      .function("minkowskiSum", &Manifold::MinkowskiSum)
+      .function("minkowskiDifference", &Manifold::MinkowskiDifference)
       .function("_Slice", &Manifold::Slice)
       .function("_Project", &Manifold::Project)
       .function("hull", select_overload<Manifold() const>(&Manifold::Hull))
@@ -162,9 +185,10 @@ EMSCRIPTEN_BINDINGS(whatever) {
       .function("refine", &Manifold::Refine)
       .function("refineToLength", &Manifold::RefineToLength)
       .function("refineToTolerance", &Manifold::RefineToTolerance)
-      .function("smoothByNormals", &Manifold::SmoothByNormals)
+      .function("_SmoothByNormals", &Manifold::SmoothByNormals)
       .function("_SmoothOut", &Manifold::SmoothOut)
       .function("_Warp", &man_js::Warp)
+      .function("_WarpBatch", &man_js::WarpBatch)
       .function("_SetProperties", &man_js::SetProperties)
       .function("transform", &man_js::Transform)
       .function("_Translate", &Manifold::Translate)
@@ -174,7 +198,8 @@ EMSCRIPTEN_BINDINGS(whatever) {
       .function("_Decompose", select_overload<std::vector<Manifold>() const>(
                                   &Manifold::Decompose))
       .function("isEmpty", &Manifold::IsEmpty)
-      .function("status", &Manifold::Status)
+      .function("status", &man_js::Status)
+      .function("withContext", &Manifold::WithContext)
       .function("numVert", &Manifold::NumVert)
       .function("numEdge", &Manifold::NumEdge)
       .function("numTri", &Manifold::NumTri)
@@ -183,10 +208,12 @@ EMSCRIPTEN_BINDINGS(whatever) {
       .function("_boundingBox", &Manifold::BoundingBox)
       .function("tolerance", &Manifold::GetTolerance)
       .function("setTolerance", &Manifold::SetTolerance)
+      .function("_Simplify", &Manifold::Simplify)
       .function("genus", &Manifold::Genus)
       .function("volume", &Manifold::Volume)
       .function("surfaceArea", &Manifold::SurfaceArea)
       .function("minGap", &Manifold::MinGap)
+      .function("_RayCast", &man_js::RayCast)
       .function("calculateCurvature", &Manifold::CalculateCurvature)
       .function("_CalculateNormals", &Manifold::CalculateNormals)
       .function("originalID", &Manifold::OriginalID)
@@ -204,7 +231,7 @@ EMSCRIPTEN_BINDINGS(whatever) {
   function("_LevelSet", &man_js::LevelSet);
   function("_Merge", &js::Merge);
   function("_ReserveIDs", &Manifold::ReserveIDs);
-  function("_manifoldCompose", &Manifold::Compose);
+  function("_manifoldCompose", &man_js::UnionN);
   function("_manifoldUnionN", &man_js::UnionN);
   function("_manifoldDifferenceN", &man_js::DifferenceN);
   function("_manifoldIntersectionN", &man_js::IntersectionN);

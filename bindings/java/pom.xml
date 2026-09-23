@@ -16,6 +16,7 @@
     </licenses>
 
     <properties>
+        <manifold.build.dir>${project.basedir}/../../build</manifold.build.dir>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
@@ -42,21 +43,21 @@
             <url>https://clojars.org/repo</url>
         </repository>
     </distributionManagement>
-    
+
     <build>
         <resources>
             <resource>
-                <directory>../../build/bin</directory>
+                <directory>${manifold.build.dir}/bin</directory>
             </resource>
             <resource>
-                <directory>../../build/src/</directory>
+                <directory>${manifold.build.dir}/src/</directory>
                 <includes>
                     <include>libmanifold.so</include>
                     <include>libmanifold.2.4.5.dylib</include>
                 </includes>
             </resource>
             <resource>
-                <directory>../../build/src/manifold/Release</directory>
+                <directory>${manifold.build.dir}/src/manifold/Release</directory>
                 <includes>
                     <include>manifold.dll</include>
                 </includes>
@@ -78,7 +79,7 @@
                         <configuration>
                             <target>
                                 <delete file="${project.build.outputDirectory}/libmanifold.so"/>
-                                <copy file="${project.basedir}/../../build/src/libmanifold.so.3.0.0"
+                                <copy file="${manifold.build.dir}/src/libmanifold.so"
                                       tofile="${project.build.outputDirectory}/libmanifold.so"/>
                             </target>
                         </configuration>
@@ -92,15 +93,15 @@
                 <version>1.5.9</version>
                 <configuration>
                     <classPath>${project.build.outputDirectory}</classPath>
-                    <libraryPath>${project.build.directory}/../../../build/src/</libraryPath>
+                    <linkPath>${manifold.build.dir}/src/</linkPath>
                     <includePaths>
                         <includePath>${project.build.sourceDirectory}</includePath>
-                        <includePath>src/main/cpp/manifold3d/</includePath>
-                        <includePath>../../include/</includePath>
-                        <includePath>../../src/third_party/clipper2/CPP/Clipper2Lib/include/</includePath>
-                        <includePath>../../build/_deps/texttopolygon-src/include</includePath>
-                        <includePath>../../build/_deps/freetype2-src/include</includePath>
-                        <includePath>../../src/</includePath>
+                        <includePath>${project.basedir}/src/main/cpp/manifold3d/</includePath>
+                        <includePath>${project.basedir}/../../include/</includePath>
+                        <includePath>${project.basedir}/../../src/third_party/clipper2/CPP/Clipper2Lib/include/</includePath>
+                        <includePath>${manifold.build.dir}/_deps/texttopolygon-src/include</includePath>
+                        <includePath>${manifold.build.dir}/_deps/freetype2-src/include</includePath>
+                        <includePath>${project.basedir}/../../src/</includePath>
                     </includePaths>
                     <preload>libmanifold.so</preload>
                     <copyLibs>false</copyLibs>
@@ -114,22 +115,12 @@
                             <goal>build</goal>
                         </goals>
                         <configuration>
-                            <includes>
-                                <include>${project.build.directory}/../../../build/src/manifold/</include>
-                            </includes>
-                            <compilerProperties>                                <java.library.path>../../build/src/manifold/</java.library.path>
-                            </compilerProperties>
                             <classOrPackageNames>
                                 <classOrPackageName>manifold3d.*</classOrPackageName>
                                 <classOrPackageName>manifold3d.manifold.*</classOrPackageName>
                                 <classOrPackageName>manifold3d.pub.*</classOrPackageName>
                                 <classOrPackageName>manifold3d.linalg.*</classOrPackageName>
                             </classOrPackageNames>
-
-
-                    <compilerProperties>                                <java.library.path>${project.build.directory}/../../../build/src/</java.library.path>
-
-                    </compilerProperties>
                         </configuration>
                     </execution>
                 </executions>

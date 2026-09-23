@@ -9,10 +9,10 @@ on:
 
 jobs:
   deploy_github_pages:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Doxygen Action
       uses: mattnotmitt/doxygen-action@edge
@@ -23,7 +23,7 @@ jobs:
         mv ./samples ./public
         mv ./docs ./public
 
-    - name: Download built examples
+    - name: Download manifoldCAD editor, examples and documentation
       uses: dawidd6/action-download-artifact@v6
       with:
         workflow: manifold.yml
@@ -32,15 +32,8 @@ jobs:
         run_id: ${{github.event.workflow_run.id}}
         # do not download from old run
         check_artifacts: true 
-        name: wasm
+        name: wasmpublic
         path: ./public
-
-    - name: Deploy Javascript Docs to Github Pages
-      run: |
-        cd bindings/wasm
-        npm install
-        npm run docs
-        mv ./docs ../../public/jsdocs
 
     - name: Deploy to Github Pages
       uses: peaceiris/actions-gh-pages@v3

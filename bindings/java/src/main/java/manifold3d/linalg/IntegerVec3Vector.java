@@ -13,7 +13,7 @@ import java.util.Iterator;
 import java.lang.Iterable;
 import java.util.NoSuchElementException;
 
-@Platform(compiler = "cpp17", include = {"<vector>", "linalg.h"})
+@Platform(compiler = "cpp17", include = {"<vector>", "manifold/linalg.h"})
 @Name("std::vector<linalg::vec<int, 3>>")
 public class IntegerVec3Vector extends Pointer implements Iterable<IntegerVec3> {
     static { Loader.load(); }

@@ -2,7 +2,7 @@ package manifold3d;
 import org.bytedeco.javacpp.*;
 import org.bytedeco.javacpp.annotation.*;
 
-@Platform(compiler="cpp17", include="spatial_index.hpp", linkpath={LibraryPaths.MANIFOLD_LIB_DIR}, link={"manifold"})
+@Platform(compiler="cpp17", include="spatial_index.hpp", link={"manifold"})
 @Namespace("MeshUtils")
 public class SpatialIndex extends Pointer {
     static { Loader.load(); }

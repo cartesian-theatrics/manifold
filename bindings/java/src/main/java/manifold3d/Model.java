@@ -5,7 +5,7 @@ import manifold3d.manifold.MeshGL;
 import manifold3d.linalg.*;
 import manifold3d.pub.Box;
 
-@Platform(compiler="cpp17", include="model_utils.hpp", linkpath={LibraryPaths.MANIFOLD_LIB_DIR}, link={"manifold"})
+@Platform(compiler="cpp17", include="model_utils.hpp", link={"manifold"})
 @Namespace("manifold")
 public class Model extends Pointer {
     static { Loader.load(); }
@@ -24,6 +24,9 @@ public class Model extends Pointer {
     @Name("Mirror") public native @ByVal Model mirror(@ByVal DoubleVec3 v);
     @Name("Transform") public native @ByVal Model transform(@Const @ByRef DoubleMat3x4 v);
     @Name("Refine") public native @ByVal Model refine(int n);
+    @Name("RefineToTolerance") public native @ByVal Model refineToTolerance(double n);
+    @Name("SetTolerance") public native @ByVal Model setTolerance(double n);
+    @Name("Simplify") public native @ByVal Model simplify(double n);
     @Name("RefineToLength") public native @ByVal Model refineToLength(double n);
     @Name("SmoothOut") public native @ByVal Model smoothOut(double angle,double amount);
     @Name("CalculateNormals") public native @ByVal Model calculateNormals(int index,double angle);

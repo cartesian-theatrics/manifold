@@ -33,7 +33,6 @@ import org.bytedeco.javacpp.*;
 import org.bytedeco.javacpp.annotation.*;
 
 @Platform(compiler = "cpp17", include = {"manifold/manifold.h", "manifold/meshIO.h"},
-          linkpath = { LibraryPaths.MANIFOLD_LIB_DIR },
           link = { "manifold" })
 @Namespace("manifold")
 public class Manifold extends Pointer {
@@ -68,6 +67,9 @@ public class Manifold extends Pointer {
 
         Loader.load();
     }
+
+    /** Initialize the packaged native library before another JNI entry point. */
+    public static void ensureLoaded() {}
 
     // Constructors and destructor
     public Manifold() { allocate(); }
@@ -211,4 +213,14 @@ public class Manifold extends Pointer {
     public static native @ByVal Manifold Compose(@ByRef ManifoldVector manifolds);
 
 
+
+    @Name("WithContext") public native @ByVal Manifold withContext(@Const @ByRef ExecutionContext context);
+    @Name("MinkowskiSum") public native @ByVal Manifold minkowskiSum(@Const @ByRef Manifold other);
+    @Name("MinkowskiDifference") public native @ByVal Manifold minkowskiDifference(@Const @ByRef Manifold other);
+    @Name("Simplify") public native @ByVal Manifold simplify(double tolerance);
+    @Name("RefineToTolerance") public native @ByVal Manifold refineToTolerance(double tolerance);
+    @Name("GetTolerance") public native double getTolerance();
+    @Name("SetTolerance") public native @ByVal Manifold setTolerance(double tolerance);
+    @Name("MinGap") public native double minGap(@Const @ByRef Manifold other, double searchLength);
+    @Name("RayCast") public native @ByVal manifold3d.pub.RayHitVector rayCast(@ByVal DoubleVec3 origin, @ByVal DoubleVec3 endpoint);
 }

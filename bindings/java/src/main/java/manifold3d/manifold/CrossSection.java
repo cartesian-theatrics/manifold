@@ -14,7 +14,6 @@ import manifold3d.pub.Polygons;
 
 @Platform(compiler = "cpp17",
           include = { "manifold/cross_section.h" },
-          linkpath = { LibraryPaths.MANIFOLD_LIB_DIR },
           link = { "manifold" })
 @Namespace("manifold")
 public class CrossSection extends Pointer {
@@ -39,7 +38,8 @@ public class CrossSection extends Pointer {
     public enum JoinType {
         Square,
         Round,
-        Miter
+        Miter,
+        Bevel
     };
 
     public CrossSection(@Const @ByRef SimplePolygon contour, @Cast("manifold::CrossSection::FillRule") int fillrule) { allocate(contour, fillrule); }

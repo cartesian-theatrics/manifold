@@ -6,6 +6,7 @@ cat <<EOT > CMakeLists.txt
 cmake_minimum_required(VERSION 3.18)
 project(testing LANGUAGES CXX)
 set(MANIFOLD_PAR ON)
+set(MANIFOLD_USE_BUILTIN_TBB ON)
 add_subdirectory(manifold EXCLUDE_FROM_ALL)
 add_executable(testing test.cpp)
 target_link_libraries(testing PRIVATE manifold::manifold)
@@ -20,7 +21,7 @@ EOT
 cp -r ../manifold ./
 mkdir build
 cd build
-cmake ..
+cmake -DFETCHCONTENT_SOURCE_DIR_CLIPPER2=$CLIPPER2 -DFETCHCONTENT_SOURCE_DIR_TBB=$TBB ..
 make
 ./testing
 

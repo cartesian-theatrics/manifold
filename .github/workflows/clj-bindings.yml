@@ -1,0 +1,35 @@
+name: Clojure native bindings
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  jni-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y libassimp-dev
+      - name: Configure
+        run: >-
+          cmake -S . -B build-upstream -DCMAKE_BUILD_TYPE=Release
+          -DMANIFOLD_EXPORT=ON -DMANIFOLD_PAR=OFF -DMANIFOLD_TEST=ON
+          -DMANIFOLD_PYBIND=OFF -DMANIFOLD_JSBIND=OFF
+      - name: Build native library and tests
+        run: cmake --build build-upstream --parallel 4
+      - name: Test native extensions
+        run: ctest --test-dir build-upstream --output-on-failure
+      - name: Build and test JNI
+        run: mvn -B -f bindings/java/pom.xml -Dmanifold.build.dir="$PWD/build-upstream" package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manifold-jni-linux-x86_64
+          path: bindings/java/target/manifold3d-1.0.39.jar

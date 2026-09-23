@@ -5,9 +5,10 @@ import org.bytedeco.javacpp.*;
 import org.bytedeco.javacpp.annotation.*;
 
 import manifold3d.UIntVector;
+import manifold3d.ByteVector;
 import manifold3d.FloatVector;
 
-@Platform(compiler = "cpp17", include = "manifold/meshIO.h", linkpath = { LibraryPaths.MANIFOLD_LIB_DIR }, link = { "manifold" })
+@Platform(compiler = "cpp17", include = "manifold/meshIO.h", link = { "manifold" })
 @Namespace("manifold")
 public class MeshGL extends Pointer {
     static { Loader.load(); }
@@ -19,6 +20,13 @@ public class MeshGL extends Pointer {
 
     public native @Cast("uint32_t") int NumVert();
     public native @Cast("uint32_t") int NumTri();
+    public native @Cast("uint32_t") int NumRun();
+    public native @ByRef ByteVector runFlags();
+    public native MeshGL runFlags(@ByRef ByteVector flags);
+    public native boolean HasNormals(@Cast("size_t") long run);
+    public native boolean Backside(@Cast("size_t") long run);
+    public native float tolerance();
+    public native MeshGL tolerance(float value);
 
     public native @Cast("uint32_t") int numProp();
     public native MeshGL numProp(@Cast("uint32_t") int numProp);

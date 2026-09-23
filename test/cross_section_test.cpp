@@ -37,13 +37,31 @@ TEST(CrossSection, MirrorUnion) {
   auto cross = a + b + b.Mirror({1, 1});
   auto result = Manifold::Extrude(cross.ToPolygons(), 5.);
 
-#ifdef MANIFOLD_EXPORT
   if (options.exportModels)
-    ExportMesh("cross_section_mirror_union.glb", result.GetMeshGL(), {});
-#endif
+    WriteTestOBJ("cross_section_mirror_union.obj", result);
 
   EXPECT_FLOAT_EQ(2.5 * a.Area(), cross.Area());
   EXPECT_TRUE(a.Mirror(vec2(0.0)).IsEmpty());
+}
+
+TEST(CrossSection, MirrorCheckAxis) {
+  auto tri = CrossSection({{0., 0.}, {5., 5.}, {0., 10.}});
+
+  auto a = tri.Mirror({1., 1.}).Bounds();
+  auto a_expected = CrossSection({{0., 0.}, {-10., 0.}, {-5., -5.}}).Bounds();
+
+  EXPECT_NEAR(a.min.x, a_expected.min.x, 0.001);
+  EXPECT_NEAR(a.min.y, a_expected.min.y, 0.001);
+  EXPECT_NEAR(a.max.x, a_expected.max.x, 0.001);
+  EXPECT_NEAR(a.max.y, a_expected.max.y, 0.001);
+
+  auto b = tri.Mirror({-1., 1.}).Bounds();
+  auto b_expected = CrossSection({{0., 0.}, {10., 0.}, {5., 5.}}).Bounds();
+
+  EXPECT_NEAR(b.min.x, b_expected.min.x, 0.001);
+  EXPECT_NEAR(b.min.y, b_expected.min.y, 0.001);
+  EXPECT_NEAR(b.max.x, b_expected.max.x, 0.001);
+  EXPECT_NEAR(b.max.y, b_expected.max.y, 0.001);
 }
 
 TEST(CrossSection, RoundOffset) {
@@ -52,14 +70,27 @@ TEST(CrossSection, RoundOffset) {
   auto rounded = a.Offset(5., CrossSection::JoinType::Round, 2, segments);
   auto result = Manifold::Extrude(rounded.ToPolygons(), 5.);
 
-#ifdef MANIFOLD_EXPORT
   if (options.exportModels)
-    ExportMesh("cross_section_round_offset.glb", result.GetMeshGL(), {});
-#endif
+    WriteTestOBJ("cross_section_round_offset.obj", result);
 
   EXPECT_EQ(result.Genus(), 0);
   EXPECT_NEAR(result.Volume(), 4386, 1);
   EXPECT_EQ(rounded.NumVert(), segments + 4);
+}
+
+TEST(CrossSection, BevelOffset) {
+  auto a = CrossSection::Square({20., 20.}, true);
+  int segments = 20;
+  auto rounded = a.Offset(5., CrossSection::JoinType::Bevel, 2, segments);
+  auto result = Manifold::Extrude(rounded.ToPolygons(), 5.);
+
+  if (options.exportModels)
+    WriteTestOBJ("cross_section_bevel_offset.obj", result);
+
+  EXPECT_EQ(result.Genus(), 0);
+  EXPECT_NEAR(result.Volume(),
+              5 * (((20. + (2 * 5.)) * (20. + (2 * 5.))) - (2 * 5. * 5)), 1);
+  EXPECT_EQ(rounded.NumVert(), 4 + 4);
 }
 
 TEST(CrossSection, Empty) {
@@ -111,7 +142,7 @@ TEST(CrossSection, Transform) {
 TEST(CrossSection, Warp) {
   auto sq = CrossSection::Square({10., 10.});
   auto a = sq.Scale({2, 3}).Translate({4, 5});
-  auto b = sq.Warp([](vec2 &v) {
+  auto b = sq.Warp([](vec2& v) {
     v.x = v.x * 2 + 4;
     v.y = v.y * 3 + 5;
   });
@@ -170,12 +201,10 @@ TEST(CrossSection, Hull) {
   auto centres = SimplePolygon{{0, 0}, {0, 30}, {30, 0}, {15, 5}};
   auto tri = CrossSection::Hull(centres);
 
-#ifdef MANIFOLD_EXPORT
   if (options.exportModels) {
     auto circ_tri_ex = Manifold::Extrude(circ_tri.ToPolygons(), 10);
-    ExportMesh("cross_section_hull_circ_tri.glb", circ_tri_ex.GetMeshGL(), {});
+    WriteTestOBJ("cross_section_hull_circ_tri.obj", circ_tri_ex);
   }
-#endif
 
   auto circ_area = circ.Area();
   EXPECT_FLOAT_EQ(circ_area, (circ - circ.Scale({0.8, 0.8})).Hull().Area());
@@ -200,4 +229,37 @@ TEST(CrossSection, HullError) {
   auto rr_verts = rr.NumVert();
   EXPECT_FLOAT_EQ(rr_area, 1765.1790375559026);
   EXPECT_FLOAT_EQ(rr_verts, 40);
+}
+
+TEST(CrossSection, BatchBoolean) {
+  CrossSection square = CrossSection::Square({100, 100});
+  CrossSection circle1 = CrossSection::Circle(30, 30).Translate({-10, 30});
+  CrossSection circle2 = CrossSection::Circle(20, 30).Translate({110, 20});
+  CrossSection circle3 = CrossSection::Circle(40, 30).Translate({50, 110});
+
+  CrossSection intersect = CrossSection::BatchBoolean(
+      {square, circle1, circle2, circle3}, OpType::Intersect);
+
+  EXPECT_FLOAT_EQ(intersect.Area(), 0);
+  EXPECT_FLOAT_EQ(intersect.NumVert(), 0);
+
+  CrossSection add = CrossSection::BatchBoolean(
+      {square, circle1, circle2, circle3}, OpType::Add);
+
+  CrossSection subtract = CrossSection::BatchBoolean(
+      {square, circle1, circle2, circle3}, OpType::Subtract);
+
+  EXPECT_FLOAT_EQ(add.Area(), 16278.637002);
+  EXPECT_FLOAT_EQ(add.NumVert(), 66);
+
+  EXPECT_FLOAT_EQ(subtract.Area(), 7234.478452);
+  EXPECT_FLOAT_EQ(subtract.NumVert(), 42);
+}
+
+TEST(CrossSection, NegativeOffset) {
+  CrossSection plusSign = CrossSection::Square({30, 50}, true) +
+                          CrossSection::Square({50, 30}, true);
+  CrossSection dilated =
+      plusSign.Offset(-10, CrossSection::JoinType::Round, 2.0, 1024);
+  EXPECT_NEAR(dilated.Area(), 30 * 30 - 10 * 10 * kPi, 0.01);
 }

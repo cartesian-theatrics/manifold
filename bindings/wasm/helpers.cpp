@@ -44,6 +44,10 @@ val MeshGL2JS(const MeshGL& mesh) {
   meshJS.set("runTransform", val(typed_memory_view(mesh.runTransform.size(),
                                                    mesh.runTransform.data()))
                                  .call<val>("slice"));
+  meshJS.set("runFlags",
+             val(typed_memory_view(mesh.runFlags.size(), mesh.runFlags.data()))
+                 .call<val>("slice"));
+  meshJS.set("tolerance", mesh.tolerance);
 
   return meshJS;
 }
@@ -79,6 +83,12 @@ MeshGL MeshJS2GL(const val& mesh) {
   if (mesh["runTransform"] != val::undefined()) {
     out.runTransform =
         convertJSArrayToNumberVector<float>(mesh["runTransform"]);
+  }
+  if (mesh["runFlags"] != val::undefined()) {
+    out.runFlags = convertJSArrayToNumberVector<uint8_t>(mesh["runFlags"]);
+  }
+  if (mesh["tolerance"] != val::undefined()) {
+    out.tolerance = mesh["tolerance"].as<float>();
   }
   return out;
 }
@@ -155,7 +165,8 @@ CrossSection Offset(CrossSection& cross_section, double delta, int join_type,
                     double miter_limit, double arc_tolerance) {
   auto jt = join_type == 0   ? CrossSection::JoinType::Square
             : join_type == 1 ? CrossSection::JoinType::Round
-                             : CrossSection::JoinType::Miter;
+            : join_type == 2 ? CrossSection::JoinType::Miter
+                             : CrossSection::JoinType::Bevel;
   return cross_section.Offset(delta, jt, miter_limit, arc_tolerance);
 }
 
@@ -199,6 +210,35 @@ Manifold Warp(Manifold& manifold, uintptr_t funcPtr) {
   return manifold.Warp(f);
 }
 
+Manifold WarpBatch(Manifold& manifold, uintptr_t funcPtr) {
+  void (*f)(uintptr_t, size_t) =
+      reinterpret_cast<void (*)(uintptr_t, size_t)>(funcPtr);
+
+  return manifold.WarpBatch([&](manifold::VecView<manifold::vec3> vecs) {
+    const size_t n = vecs.size();
+
+    // Flatten
+    std::vector<double> flat;
+    flat.resize(n * 3);
+    for (size_t i = 0; i < n; ++i) {
+      const manifold::vec3& v = vecs[i];
+      flat[i * 3 + 0] = v[0];
+      flat[i * 3 + 1] = v[1];
+      flat[i * 3 + 2] = v[2];
+    }
+
+    f(reinterpret_cast<uintptr_t>(flat.data()), n);
+
+    // Copy back to vecs
+    for (size_t i = 0; i < n; ++i) {
+      manifold::vec3& v = vecs[i];
+      v[0] = flat[i * 3 + 0];
+      v[1] = flat[i * 3 + 1];
+      v[2] = flat[i * 3 + 2];
+    }
+  });
+}
+
 Manifold SetProperties(Manifold& manifold, int numProp, uintptr_t funcPtr) {
   void (*f)(double*, vec3, const double*) =
       reinterpret_cast<void (*)(double*, vec3, const double*)>(funcPtr);
@@ -211,6 +251,67 @@ Manifold LevelSet(uintptr_t funcPtr, Box bounds, double edgeLength,
   return Manifold::LevelSet(f, bounds, edgeLength, level, tolerance, false);
 }
 
+// ctx-aware static factories: like the plain factories above, but run under an
+// ExecutionContext so progress / cancellation are observed (these ops have no
+// source Manifold to attach via withContext). Bound as ExecutionContext methods
+// (first arg is the receiver).
+Manifold ExecutionContextFromMesh(ExecutionContext& ctx, const val& mesh) {
+  return ctx.FromMeshGL(js::MeshJS2GL(mesh));
+}
+
+Manifold ExecutionContextSmooth(ExecutionContext& ctx, const val& mesh,
+                                const std::vector<Smoothness>& sharpenedEdges) {
+  return ctx.Smooth(js::MeshJS2GL(mesh), sharpenedEdges);
+}
+
+Manifold ExecutionContextLevelSet(ExecutionContext& ctx, uintptr_t funcPtr,
+                                  Box bounds, double edgeLength, double level,
+                                  double tolerance) {
+  double (*f)(const vec3&) = reinterpret_cast<double (*)(const vec3&)>(funcPtr);
+  return ctx.LevelSet(f, bounds, edgeLength, level, tolerance, false);
+}
+
+std::string ErrorToString(Manifold::Error error) {
+  switch (error) {
+    case Manifold::Error::NoError:
+      return "NoError";
+    case Manifold::Error::NonFiniteVertex:
+      return "NonFiniteVertex";
+    case Manifold::Error::NotManifold:
+      return "NotManifold";
+    case Manifold::Error::VertexOutOfBounds:
+      return "VertexOutOfBounds";
+    case Manifold::Error::PropertiesWrongLength:
+      return "PropertiesWrongLength";
+    case Manifold::Error::MissingPositionProperties:
+      return "MissingPositionProperties";
+    case Manifold::Error::MergeVectorsDifferentLengths:
+      return "MergeVectorsDifferentLengths";
+    case Manifold::Error::MergeIndexOutOfBounds:
+      return "MergeIndexOutOfBounds";
+    case Manifold::Error::TransformWrongLength:
+      return "TransformWrongLength";
+    case Manifold::Error::RunIndexWrongLength:
+      return "RunIndexWrongLength";
+    case Manifold::Error::FaceIDWrongLength:
+      return "FaceIDWrongLength";
+    case Manifold::Error::InvalidConstruction:
+      return "InvalidConstruction";
+    case Manifold::Error::ResultTooLarge:
+      return "ResultTooLarge";
+    case Manifold::Error::InvalidTangents:
+      return "InvalidTangents";
+    case Manifold::Error::Cancelled:
+      return "Cancelled";
+    default:
+      return "UnknownError";
+  }
+}
+
+std::string Status(Manifold& manifold) {
+  return ErrorToString(manifold.Status());
+}
+
 std::vector<Manifold> Split(Manifold& a, Manifold& b) {
   auto [r1, r2] = a.Split(b);
   return {r1, r2};
@@ -220,6 +321,10 @@ std::vector<Manifold> SplitByPlane(Manifold& m, vec3 normal,
                                    double originOffset) {
   auto [a, b] = m.SplitByPlane(normal, originOffset);
   return {a, b};
+}
+
+std::vector<RayHit> RayCast(const Manifold& m, vec3 origin, vec3 endpoint) {
+  return m.RayCast(origin, endpoint);
 }
 
 void CollectVertices(std::vector<vec3>& verts, const Manifold& manifold) {

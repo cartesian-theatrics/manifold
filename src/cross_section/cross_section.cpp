@@ -12,19 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "text_to_polygon.h"
 #include "manifold/cross_section.h"
 
 #include "../utils.h"
 #include "clipper2/clipper.core.h"
 #include "clipper2/clipper.h"
 #include "clipper2/clipper.offset.h"
+#include "text_to_polygon.h"
 
 namespace C2 = Clipper2Lib;
 
 using namespace manifold;
 
 namespace manifold {
+CrossSection CrossSection::Text(const std::string& fontFile,
+                                const std::string& text, uint32_t pixelHeight,
+                                int interpRes, FillRule fillRule) {
+  Polygons polys =
+      TextToPolygon::textToPolygons(fontFile, text, pixelHeight, interpRes);
+  return CrossSection(polys, fillRule);
+}
 struct PathImpl {
   PathImpl(const C2::PathsD paths_) : paths_(paths_) {}
   operator const C2::PathsD&() const { return paths_; }
@@ -78,6 +85,9 @@ C2::JoinType jt(CrossSection::JoinType jointype) {
       break;
     case CrossSection::JoinType::Miter:
       jt = C2::JoinType::Miter;
+      break;
+    case CrossSection::JoinType::Bevel:
+      jt = C2::JoinType::Bevel;
       break;
   };
   return jt;
@@ -226,12 +236,14 @@ CrossSection& CrossSection::operator=(CrossSection&&) noexcept = default;
  * const methods.
  */
 CrossSection::CrossSection(const CrossSection& other) {
+  std::lock_guard<std::mutex> lock(*other.pathsMutex_);
   paths_ = other.paths_;
   transform_ = other.transform_;
 }
 
 CrossSection& CrossSection::operator=(const CrossSection& other) {
   if (this != &other) {
+    std::scoped_lock lock(*pathsMutex_, *other.pathsMutex_);
     paths_ = other.paths_;
     transform_ = other.transform_;
   }
@@ -293,25 +305,13 @@ CrossSection::CrossSection(const Rect& rect) {
 // All access to paths_ should be done through the GetPaths() method, which
 // applies the accumulated transform_
 std::shared_ptr<const PathImpl> CrossSection::GetPaths() const {
+  std::lock_guard<std::mutex> lock(*pathsMutex_);
   if (transform_ == mat2x3(la::identity)) {
     return paths_;
   }
   paths_ = shared_paths(::transform(paths_->paths_, transform_));
   transform_ = mat2x3(la::identity);
   return paths_;
-}
-
-/**
- * Renders text to a cross section.
- *
- * @param fontFile path to a .ttf font file.
- * @param text Text to render as polygon
- * @param pixelHeight freetype pixelHeight.
- * @param interpRes Resolution of interpolation of curves.
- */
-CrossSection CrossSection::Text(const std::string& fontFile, const std::string& text, uint32_t pixelHeight, int interpRes, FillRule fillRule) {
-  Polygons polys = TextToPolygon::textToPolygons(fontFile, text, pixelHeight, interpRes);
-  return CrossSection(polys, fillRule);
 }
 
 /**
@@ -390,6 +390,16 @@ CrossSection CrossSection::BatchBoolean(
     return crossSections[0];
 
   auto subjs = crossSections[0].GetPaths();
+
+  if (op == OpType::Intersect) {
+    auto res = subjs->paths_;
+    for (size_t i = 1; i < crossSections.size(); ++i) {
+      res = C2::BooleanOp(C2::ClipType::Intersection, C2::FillRule::Positive,
+                          res, crossSections[i].GetPaths()->paths_, precision_);
+    }
+    return CrossSection(shared_paths(res));
+  }
+
   int n_clips = 0;
   for (size_t i = 1; i < crossSections.size(); ++i) {
     n_clips += crossSections[i].GetPaths()->paths_.size();
@@ -460,7 +470,8 @@ CrossSection& CrossSection::operator^=(const CrossSection& Q) {
  * Construct a CrossSection from a vector of other CrossSections (batch
  * boolean union).
  */
-CrossSection CrossSection::Compose(std::vector<CrossSection>& crossSections) {
+CrossSection CrossSection::Compose(
+    const std::vector<CrossSection>& crossSections) {
   return BatchBoolean(crossSections, OpType::Add);
 }
 
@@ -532,9 +543,9 @@ CrossSection CrossSection::Scale(const vec2 scale) const {
 }
 
 /**
- * Mirror this CrossSection over the arbitrary axis described by the unit form
- * of the given vector. If the length of the vector is zero, an empty
- * CrossSection is returned. This operation can be chained. Transforms are
+ * Mirror this CrossSection over the arbitrary axis whose normal is described by
+ * the unit form of the given vector. If the length of the vector is zero, an
+ * empty CrossSection is returned. This operation can be chained. Transforms are
  * combined and applied lazily.
  *
  * @param ax the axis to be mirrored over
@@ -543,7 +554,7 @@ CrossSection CrossSection::Mirror(const vec2 ax) const {
   if (la::length(ax) == 0.) {
     return CrossSection();
   }
-  auto n = la::normalize(la::abs(ax));
+  auto n = la::normalize(ax);
   auto m = mat2x3(mat2(la::identity) - 2.0 * la::outerprod(n, n), vec2(0.0));
   return Transform(m);
 }
@@ -556,6 +567,7 @@ CrossSection CrossSection::Mirror(const vec2 ax) const {
  * @param m The affine transform matrix to apply to all the vertices.
  */
 CrossSection CrossSection::Transform(const mat2x3& m) const {
+  std::lock_guard<std::mutex> lock(*pathsMutex_);
   auto transformed = CrossSection();
   transformed.transform_ = m * Mat3(transform_);
   transformed.paths_ = paths_;
@@ -655,7 +667,7 @@ CrossSection CrossSection::Simplify(double epsilon) const {
  * to expand, and retraction of inner (hole) contours. Negative deltas will
  * have the opposite effect.
  * @param jointype The join type specifying the treatment of contour joins
- * (corners).
+ * (corners). Defaults to Round.
  * @param miter_limit The maximum distance in multiples of delta that vertices
  * can be offset from their original positions with before squaring is
  * applied, <B>when the join type is Miter</B> (default is 2, which is the
@@ -678,8 +690,7 @@ CrossSection CrossSection::Offset(double delta, JoinType jointype,
     // (radius) in order to get back the same number of segments in Clipper2:
     // steps_per_360 = PI / acos(1 - arc_tol / abs_delta)
     const double abs_delta = std::fabs(delta);
-    const double scaled_delta = abs_delta * std::pow(10, precision_);
-    arc_tol = (std::cos(Clipper2Lib::PI / n) - 1) * -scaled_delta;
+    arc_tol = (math::cos(Clipper2Lib::PI / n) - 1) * -abs_delta;
   }
   auto ps =
       C2::InflatePaths(GetPaths()->paths_, delta, jt(jointype),
@@ -754,8 +765,8 @@ double CrossSection::Area() const { return C2::Area(GetPaths()->paths_); }
 /**
  * Return the number of vertices in the CrossSection.
  */
-int CrossSection::NumVert() const {
-  int n = 0;
+size_t CrossSection::NumVert() const {
+  size_t n = 0;
   auto paths = GetPaths()->paths_;
   for (auto p : paths) {
     n += p.size();
@@ -767,7 +778,7 @@ int CrossSection::NumVert() const {
  * Return the number of contours (both outer and inner paths) in the
  * CrossSection.
  */
-int CrossSection::NumContour() const { return GetPaths()->paths_.size(); }
+size_t CrossSection::NumContour() const { return GetPaths()->paths_.size(); }
 
 /**
  * Does the CrossSection contain any contours?

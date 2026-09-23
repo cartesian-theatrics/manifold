@@ -7,7 +7,7 @@ import java.util.Iterator;
 import java.lang.Iterable;
 import java.util.NoSuchElementException;
 
-@Platform(compiler = "cpp17", include = "linalg.h")
+@Platform(compiler = "cpp17", include = "manifold/linalg.h")
 @Namespace("linalg")
 @Name("vec<double, 3>")
 public class DoubleVec3 extends DoublePointer implements Iterable<Double> {

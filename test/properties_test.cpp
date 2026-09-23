@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "../src/tri_dist.h"
 #include "../src/utils.h"
 #include "manifold/manifold.h"
-#include "samples.h"
 #include "test.h"
 
 using namespace manifold;
@@ -53,27 +51,38 @@ TEST(Properties, Tolerance) {
   double tol = sind(degrees);
   Manifold cube = Manifold::Cube({1, 1, 1}, true);
   Manifold imperfect = (cube ^ cube.Rotate(degrees)).AsOriginal();
+  EXPECT_EQ(imperfect.NumTri(), 28);
 
-  Manifold imperfect2 = imperfect.SetTolerance(tol);
+  Manifold imperfect2 = imperfect.Simplify(tol);
+  EXPECT_EQ(imperfect2.NumTri(), 12);
+
   MeshGL mesh = imperfect.GetMeshGL();
   mesh.tolerance = tol;
   Manifold imperfect3(mesh);
-
-  EXPECT_EQ(imperfect.NumTri(), 28);
-  EXPECT_EQ(imperfect2.NumTri(), 16);  // TODO: should be 12
-  EXPECT_EQ(imperfect3.NumTri(), 22);  // TODO: should be 12
+  EXPECT_EQ(imperfect3.NumTri(), 28);  // Don't automatically simplify
 
   EXPECT_NEAR(imperfect.Volume(), imperfect2.Volume(), 0.01);
   EXPECT_NEAR(imperfect.SurfaceArea(), imperfect2.SurfaceArea(), 0.02);
   EXPECT_NEAR(imperfect2.Volume(), imperfect3.Volume(), 0.01);
   EXPECT_NEAR(imperfect2.SurfaceArea(), imperfect3.SurfaceArea(), 0.02);
 
-#ifdef MANIFOLD_EXPORT
   if (options.exportModels) {
-    ExportMesh("tolerance.glb", imperfect2.GetMeshGL(), {});
-    ExportMesh("tolerance2.glb", imperfect3.GetMeshGL(), {});
+    WriteTestOBJ("tolerance.obj", imperfect2);
+    WriteTestOBJ("tolerance2.obj", imperfect3);
   }
-#endif
+}
+
+TEST(Properties, ToleranceSphere) {
+  const int n = 1000;
+  Manifold sphere = Manifold::Sphere(1, 4 * n);
+  EXPECT_EQ(sphere.NumTri(), 8 * n * n);
+
+  Manifold sphere2 = sphere.SetTolerance(0.01);
+  EXPECT_LT(sphere2.NumTri(), 2500);
+  EXPECT_EQ(sphere2.Genus(), 0);
+  EXPECT_NEAR(sphere.Volume(), sphere2.Volume(), 0.05);
+  EXPECT_NEAR(sphere.SurfaceArea(), sphere2.SurfaceArea(), 0.06);
+  if (options.exportModels) WriteTestOBJ("sphere.obj", sphere2);
 }
 
 /**
@@ -110,152 +119,79 @@ TEST(Properties, CalculateCurvature) {
   }
 }
 
-// These tests verify the calculation of MinGap functions.
-
-TEST(Properties, MinGapCubeCube) {
-  auto a = Manifold::Cube();
-  auto b = Manifold::Cube().Translate({2, 2, 0});
-
-  float distance = a.MinGap(b, 1.5);
-
-  EXPECT_FLOAT_EQ(distance, sqrt(2));
+TEST(Properties, CalculateNormals) {
+  Manifold sphere = Manifold::Sphere(10);
+  vec3 center(10);
+  Manifold cut = (sphere - sphere.Translate(center));
+  cut.Status();
+  Manifold cut2(cut.GetMeshGL64());
+  EXPECT_TRUE(cut.MatchesTriNormals());
+  EXPECT_TRUE(cut2.MatchesTriNormals());
+  MeshGL64 out = cut.CalculateNormals().GetMeshGL64();
+  MeshGL64 out2 = cut2.CalculateNormals().GetMeshGL64();
+  ASSERT_EQ(out.NumTri(), out2.NumTri());
+  ASSERT_EQ(out.NumVert(), out2.NumVert());
+  ASSERT_EQ(out.numProp, out2.numProp);
+  const int np = out.numProp;
+  int numBad = 0;
+  int numBad2 = 0;
+  for (int v = 0; v < out.NumVert(); ++v) {
+    auto pos = out.GetVertPos(v);
+    auto pos2 = out2.GetVertPos(v);
+    auto norm = pos;
+    auto norm2 = pos2;
+    for (int j : {0, 1, 2}) {
+      norm[j] = out.vertProperties[np * v + 3 + j];
+      norm2[j] = out2.vertProperties[np * v + 3 + j];
+      ASSERT_FLOAT_EQ(pos[j], pos2[j]);
+      ASSERT_NEAR(norm[j], norm2[j], 1e-14);
+    }
+    if (dot(pos, norm) <= 0) ++numBad;
+    if (dot(pos2, norm2) <= 0) ++numBad2;
+    EXPECT_FLOAT_EQ(la::length(norm), 1.0);
+    EXPECT_TRUE(dot(la::normalize(pos), norm) > 0.99 ||
+                dot(la::normalize(center - pos), norm) > 0.99);
+  }
+  EXPECT_EQ(numBad, 0);
+  EXPECT_EQ(numBad2, 0);
+  for (int tv = out2.runIndex[0]; tv < out2.runIndex[1]; ++tv) {
+    const int v = out2.triVerts[tv];
+    auto pos = out2.GetVertPos(v);
+    auto norm = pos;
+    for (int j : {0, 1, 2}) {
+      norm[j] = out2.vertProperties[np * v + 3 + j];
+    }
+    EXPECT_FLOAT_EQ(la::length(norm), 1.0);
+    EXPECT_GT(dot(la::normalize(pos), norm), 0.99);
+  }
 }
 
-TEST(Properties, MinGapCubeCube2) {
-  auto a = Manifold::Cube();
-  auto b = Manifold::Cube().Translate({3, 3, 0});
+TEST(Properties, Coplanar) {
+  Manifold peg = Manifold::Cube({1, 1, 2}).Translate({1, 1, 0}).AsOriginal();
+  const size_t pegID = peg.OriginalID();
+  Manifold hole = Manifold::Cube({3, 3, 1}) - peg;
+  hole = hole.AsOriginal();
+  std::vector<MeshGL> input = {hole.GetMeshGL(), peg.GetMeshGL()};
+  EXPECT_EQ(peg.Genus(), 0);
+  EXPECT_EQ(hole.Genus(), 1);
 
-  float distance = a.MinGap(b, 3);
+  Manifold result = hole + peg;
+  EXPECT_EQ(result.Genus(), 0);
+  RelatedGL(result, input);
 
-  EXPECT_FLOAT_EQ(distance, sqrt(2) * 2);
-}
+  MeshGL resultGL = result.GetMeshGL();
+  float minPegZ = std::numeric_limits<float>::max();
+  for (size_t run = 0; run < resultGL.runOriginalID.size(); run++) {
+    if (resultGL.runOriginalID[run] == pegID) {
+      for (size_t t3 = resultGL.runIndex[run]; t3 < resultGL.runIndex[run + 1];
+           t3++) {
+        const size_t v = resultGL.triVerts[t3];
+        minPegZ = std::min(minPegZ,
+                           resultGL.vertProperties[v * resultGL.numProp + 2]);
+      }
+    }
+  }
+  EXPECT_EQ(minPegZ, 0);
 
-TEST(Properties, MinGapCubeSphereOverlapping) {
-  auto a = Manifold::Cube();
-  auto b = Manifold::Sphere(1);
-
-  float distance = a.MinGap(b, 0.1);
-
-  EXPECT_FLOAT_EQ(distance, 0);
-}
-
-TEST(Properties, MinGapSphereSphere) {
-  auto a = Manifold::Sphere(1);
-  auto b = Manifold::Sphere(1).Translate({2, 2, 0});
-
-  float distance = a.MinGap(b, 0.85);
-
-  EXPECT_FLOAT_EQ(distance, 2 * sqrt(2) - 2);
-}
-
-TEST(Properties, MinGapSphereSphereOutOfBounds) {
-  auto a = Manifold::Sphere(1);
-  auto b = Manifold::Sphere(1).Translate({2, 2, 0});
-
-  float distance = a.MinGap(b, 0.8);
-
-  EXPECT_FLOAT_EQ(distance, 0.8);
-}
-
-TEST(Properties, MinGapClosestPointOnEdge) {
-  auto a = Manifold::Cube({1, 1, 1}, true).Rotate(0, 0, 45);
-  auto b =
-      Manifold::Cube({1, 1, 1}, true).Rotate(0, 45, 0).Translate({2, 0, 0});
-
-  float distance = a.MinGap(b, 0.7);
-
-  EXPECT_FLOAT_EQ(distance, 2 - sqrt(2));
-}
-
-TEST(Properties, MinGapClosestPointOnTriangleFace) {
-  auto a = Manifold::Cube();
-  auto b = Manifold::Cube().Scale({10, 10, 10}).Translate({2, -5, -1});
-
-  float distance = a.MinGap(b, 1.1);
-
-  EXPECT_FLOAT_EQ(distance, 1);
-}
-
-TEST(Properties, MingapAfterTransformations) {
-  auto a = Manifold::Sphere(1, 512).Rotate(30, 30, 30);
-  auto b =
-      Manifold::Sphere(1, 512).Scale({3, 1, 1}).Rotate(0, 90, 45).Translate(
-          {3, 0, 0});
-
-  float distance = a.MinGap(b, 1.1);
-
-  ASSERT_NEAR(distance, 1, 0.001);
-}
-
-#ifdef MANIFOLD_CROSS_SECTION
-TEST(Properties, MingapStretchyBracelet) {
-  auto a = StretchyBracelet();
-  auto b = StretchyBracelet().Translate({0, 0, 20});
-
-  float distance = a.MinGap(b, 10);
-
-  ASSERT_NEAR(distance, 5, 0.001);
-}
-#endif
-
-TEST(Properties, MinGapAfterTransformationsOutOfBounds) {
-  auto a = Manifold::Sphere(1, 512).Rotate(30, 30, 30);
-  auto b =
-      Manifold::Sphere(1, 512).Scale({3, 1, 1}).Rotate(0, 90, 45).Translate(
-          {3, 0, 0});
-
-  float distance = a.MinGap(b, 0.95);
-
-  ASSERT_NEAR(distance, 0.95, 0.001);
-}
-
-TEST(Properties, TriangleDistanceClosestPointsOnVertices) {
-  std::array<vec3, 3> p = {vec3{-1, 0, 0}, vec3{1, 0, 0}, vec3{0, 1, 0}};
-
-  std::array<vec3, 3> q = {vec3{2, 0, 0}, vec3{4, 0, 0}, vec3{3, 1, 0}};
-
-  float distance = DistanceTriangleTriangleSquared(p, q);
-
-  EXPECT_FLOAT_EQ(distance, 1);
-}
-
-TEST(Properties, TriangleDistanceClosestPointOnEdge) {
-  std::array<vec3, 3> p = {vec3{-1, 0, 0}, vec3{1, 0, 0}, vec3{0, 1, 0}};
-
-  std::array<vec3, 3> q = {vec3{-1, 2, 0}, vec3{1, 2, 0}, vec3{0, 3, 0}};
-
-  float distance = DistanceTriangleTriangleSquared(p, q);
-
-  EXPECT_FLOAT_EQ(distance, 1);
-}
-
-TEST(Properties, TriangleDistanceClosestPointOnEdge2) {
-  std::array<vec3, 3> p = {vec3{-1, 0, 0}, vec3{1, 0, 0}, vec3{0, 1, 0}};
-
-  std::array<vec3, 3> q = {vec3{1, 1, 0}, vec3{3, 1, 0}, vec3{2, 2, 0}};
-
-  float distance = DistanceTriangleTriangleSquared(p, q);
-
-  EXPECT_FLOAT_EQ(distance, 0.5);
-}
-
-TEST(Properties, TriangleDistanceClosestPointOnFace) {
-  std::array<vec3, 3> p = {vec3{-1, 0, 0}, vec3{1, 0, 0}, vec3{0, 1, 0}};
-
-  std::array<vec3, 3> q = {vec3{-1, 2, -0.5}, vec3{1, 2, -0.5},
-                           vec3{0, 2, 1.5}};
-
-  float distance = DistanceTriangleTriangleSquared(p, q);
-
-  EXPECT_FLOAT_EQ(distance, 1);
-}
-
-TEST(Properties, TriangleDistanceOverlapping) {
-  std::array<vec3, 3> p = {vec3{-1, 0, 0}, vec3{1, 0, 0}, vec3{0, 1, 0}};
-
-  std::array<vec3, 3> q = {vec3{-1, 0, 0}, vec3{1, 0.5, 0}, vec3{0, 1, 0}};
-
-  float distance = DistanceTriangleTriangleSquared(p, q);
-
-  EXPECT_FLOAT_EQ(distance, 0);
+  if (options.exportModels) WriteTestOBJ("coplanar.obj", result);
 }

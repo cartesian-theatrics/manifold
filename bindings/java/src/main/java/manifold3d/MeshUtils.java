@@ -19,7 +19,7 @@ import java.nio.DoubleBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 
-@Platform(compiler = "cpp17", include = {"mesh_utils.hpp", "buffer_utils.hpp"}, linkpath = { LibraryPaths.MANIFOLD_LIB_DIR }, link = {"manifold"})
+@Platform(compiler = "cpp17", include = {"mesh_utils.hpp", "buffer_utils.hpp"}, link = {"manifold"})
 public class MeshUtils extends Pointer {
     static { Loader.load(); }
 

@@ -8,7 +8,7 @@ import manifold3d.linalg.DoubleVec2;
 import manifold3d.linalg.DoubleMat2x3;
 import manifold3d.manifold.CrossSection;
 
-@Platform(compiler = "cpp17", include = { "manifold/manifold.h" }, linkpath = { LibraryPaths.MANIFOLD_LIB_DIR }, link = { "manifold" })
+@Platform(compiler = "cpp17", include = { "manifold/manifold.h" }, link = { "manifold" })
 @Namespace("manifold")
 public class Rect extends Pointer {
     static { Loader.load(); }

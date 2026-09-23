@@ -10,6 +10,7 @@ public class ByteVector extends Pointer {
     public native @Cast("size_t") long size();
     @Index public native @Cast("uint8_t") byte get(@Cast("size_t") long index);
     public native @Cast("uint8_t*") BytePointer data();
+    @Name("push_back") public native void pushBack(@Cast("uint8_t") byte value);
     public byte[] toByteArray() {
         byte[] result = new byte[Math.toIntExact(size())];
         if (result.length > 0) data().get(result);

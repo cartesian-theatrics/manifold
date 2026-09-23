@@ -9,7 +9,6 @@
 *.slo
 *.lo
 *.o
-*.obj
 
 # Precompiled Headers
 *.gch
@@ -107,7 +106,6 @@ Temporary Items
 
 build
 buildWASM
-build-cljs
 docs/html
 node_modules/
 bindings/wasm/examples/built
@@ -134,4 +132,16 @@ CMakeSettings.json
 [._]s[a-v][a-z]
 [._]sw[a-p]
 
-bindings/java/target
+# Benchmark stl files
+extras/ember_tests/testfiles/raw_meshes
+
+#Eclipse project files
+/.project
+/.cproject
+
+# Local bindings and native/WASM build outputs
+/bindings/java/target/*
+!/bindings/java/target/manifold3d-1.0.39.jar
+build-cljs/
+build-upstream/
+build-cljs-upstream/

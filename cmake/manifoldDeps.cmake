@@ -60,44 +60,55 @@ if(MANIFOLD_PAR)
         add_library(TBB::tbb ALIAS tbb)
       endif()
     endif()
-  else()
+  elseif(MANIFOLD_USE_BUILTIN_TBB)
     logmissingdep("TBB" , "Parallel mode")
-    set(MANIFOLD_USE_BUILTIN_TBB ON)
+    message(
+      WARNING
+      "MANIFOLD_USE_BUILTIN_TBB will statically link TBB,"
+      "which may cause issues when you use manifold with other libraries bundling their own TBB."
+    )
     set(TBB_TEST OFF CACHE INTERNAL "" FORCE)
     set(TBB_STRICT OFF CACHE INTERNAL "" FORCE)
     FetchContent_Declare(
       TBB
       GIT_REPOSITORY https://github.com/oneapi-src/oneTBB.git
-      GIT_TAG v2022.0.0
+      GIT_TAG v2022.3.0
       GIT_PROGRESS TRUE
-      EXCLUDE_FROM_ALL
     )
     FetchContent_MakeAvailable(TBB)
+    set_property(
+      DIRECTORY ${tbb_SOURCE_DIR}
+      PROPERTY EXCLUDE_FROM_ALL ${BUILD_SHARED_LIBS}
+    )
+  else()
+    message(FATAL_ERROR "Parallel mode enabled, but tbb was not found.")
   endif()
 endif()
 
-# If we're building cross_section, we need Clipper2
-if(MANIFOLD_CROSS_SECTION)
-  if(NOT MANIFOLD_USE_BUILTIN_CLIPPER2)
+# The default CrossSection backend uses Clipper2. The experimental boolean2
+# backend is in-tree and does not need this dependency.
+if(MANIFOLD_CROSS_SECTION AND MANIFOLD_CROSS_SECTION_BACKEND STREQUAL "clipper2")
+  if(NOT MANIFOLD_USE_BUILTIN_CLIPPER2 AND NOT Clipper2_FOUND)
     find_package(Clipper2 QUIET)
     if(NOT Clipper2_FOUND AND PKG_CONFIG_FOUND)
       pkg_check_modules(Clipper2 Clipper2)
-    endif()
-  endif()
-  if(Clipper2_FOUND)
-    add_library(Clipper2 SHARED IMPORTED)
-    set_property(
-      TARGET Clipper2
-      PROPERTY IMPORTED_LOCATION ${Clipper2_LINK_LIBRARIES}
-    )
-    if(WIN32)
-      set_property(
-        TARGET Clipper2
-        PROPERTY IMPORTED_IMPLIB ${Clipper2_LINK_LIBRARIES}
-      )
-    endif()
-    target_include_directories(Clipper2 INTERFACE ${Clipper2_INCLUDE_DIRS})
-  else()
+      if(Clipper2_FOUND)
+        add_library(Clipper2 SHARED IMPORTED)
+        set_property(
+          TARGET Clipper2
+          PROPERTY IMPORTED_LOCATION ${Clipper2_LINK_LIBRARIES}
+        )
+        if(WIN32)
+          set_property(
+            TARGET Clipper2
+            PROPERTY IMPORTED_IMPLIB ${Clipper2_LINK_LIBRARIES}
+          )
+        endif()
+        target_include_directories(Clipper2 INTERFACE ${Clipper2_INCLUDE_DIRS})
+      endif(Clipper2_FOUND)
+    endif(NOT Clipper2_FOUND AND PKG_CONFIG_FOUND)
+  endif(NOT MANIFOLD_USE_BUILTIN_CLIPPER2 AND NOT Clipper2_FOUND)
+  if(NOT Clipper2_FOUND)
     logmissingdep("Clipper2" , "cross_section")
     set(MANIFOLD_USE_BUILTIN_CLIPPER2 ON)
     set(CLIPPER2_UTILS OFF)
@@ -109,60 +120,62 @@ if(MANIFOLD_CROSS_SECTION)
       CACHE BOOL
       "Preempt cache default of USINGZ (we only use 2d)"
     )
+    # When manifold is built with MANIFOLD_NO_IOSTREAM, also strip
+    # iostream from the bundled Clipper2 — manifold doesn't call any
+    # of Clipper2's stream operators internally, so passing this
+    # through is safe regardless. The CLIPPER2_NO_IOSTREAM macro is
+    # added by the carry-patch below; once Clipper2#1094 lands and
+    # the SHA pin moves past it, the patch drops and the option is
+    # honored natively.
+    if(MANIFOLD_NO_IOSTREAM)
+      set(
+        CLIPPER2_NO_IOSTREAM
+        ON
+        CACHE BOOL
+        "Strip iostream-using overloads from Clipper2 (set by manifold when MANIFOLD_NO_IOSTREAM=ON)"
+        FORCE
+      )
+    endif()
     FetchContent_Declare(
       Clipper2
       GIT_REPOSITORY https://github.com/AngusJohnson/Clipper2.git
-      # Nov 22, 2024
-      GIT_TAG a8269cafe92cdbf92572bceda5e9fdacc4684b51
+      # Mar 05, 2026
+      GIT_TAG 46f639177fe418f9689e8ddb74f08a870c71f5b4
       GIT_PROGRESS TRUE
-      SOURCE_SUBDIR CPP
-      EXCLUDE_FROM_ALL
+      SOURCE_SUBDIR
+      CPP
+      # Disable Windows autocrlf on the clone so the carry-patch (which
+      # is LF-only) applies cleanly. Default core.autocrlf=true on
+      # Windows would convert all LFs to CRLFs in the working tree, and
+      # `git apply` then fails on the line-ending mismatch.
+      GIT_CONFIG
+      core.autocrlf=false
+      # Carry-patch: tracks AngusJohnson/Clipper2#1094 (CLIPPER2_NO_IOSTREAM
+      # macro guards). Drops once that PR lands and the SHA pin moves past
+      # it. Applied via wrapper script so re-configures (which re-trigger
+      # PATCH_COMMAND) don't fail when the patch is already applied.
+      PATCH_COMMAND ${CMAKE_COMMAND}
+        -DPATCH_FILE=${CMAKE_CURRENT_LIST_DIR}/patches/0001-clipper2-no-iostream.patch
+        -DSOURCE_DIR=<SOURCE_DIR>
+        -P ${CMAKE_CURRENT_LIST_DIR}/patches/apply-clipper2-patch.cmake
     )
     FetchContent_MakeAvailable(Clipper2)
+    set_property(
+      DIRECTORY ${clipper2_SOURCE_DIR}/CPP
+      PROPERTY EXCLUDE_FROM_ALL ${BUILD_SHARED_LIBS}
+    )
   endif()
   if(NOT TARGET Clipper2::Clipper2)
     add_library(Clipper2::Clipper2 ALIAS Clipper2)
   endif()
 endif()
 
-message(STATUS "Fetching TextToPolygon")
-FetchContent_Declare(
-  TextToPolygon
-  GIT_REPOSITORY https://github.com/SovereignShop/text-to-polygon.git
-  GIT_TAG 17620d97b823e4b283e40aba93dfcba3e43beae3
-)
-FetchContent_MakeAvailable(TextToPolygon)
-
-# The pinned dependency uses GCC-only floating-point `d` suffixes. Generate
-# a portable translation unit without modifying downloaded source trees.
-if(EMSCRIPTEN)
-  set(TEXT_POLYGON_SOURCE "${texttopolygon_SOURCE_DIR}/src/text_to_polygon.cpp")
-  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${TEXT_POLYGON_SOURCE}")
-  file(READ "${TEXT_POLYGON_SOURCE}" TEXT_POLYGON_CODE)
-  string(REGEX REPLACE "([0-9]+\\.[0-9]+)d" "\\1" TEXT_POLYGON_CODE "${TEXT_POLYGON_CODE}")
-  string(REPLACE "u_int32_t" "uint32_t" TEXT_POLYGON_CODE "${TEXT_POLYGON_CODE}")
-  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/text_to_polygon_portable.cpp" "${TEXT_POLYGON_CODE}")
-  file(READ "${texttopolygon_SOURCE_DIR}/include/text_to_polygon.h" TEXT_POLYGON_HEADER)
-  string(REPLACE "u_int32_t" "uint32_t" TEXT_POLYGON_HEADER "${TEXT_POLYGON_HEADER}")
-  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/text_to_polygon.h" "${TEXT_POLYGON_HEADER}")
-  target_include_directories(TextToPolygon BEFORE PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
-  # This library also ships an example main(); it must not run on WASM startup.
-  target_compile_definitions(TextToPolygon PRIVATE main=TextToPolygonExampleMain)
-  set_property(TARGET TextToPolygon PROPERTY SOURCES
-    "${CMAKE_CURRENT_BINARY_DIR}/text_to_polygon_portable.cpp")
-endif()
-
-target_link_libraries(TextToPolygon
-    PRIVATE
-    freetype
-)
-
 if(TRACY_ENABLE)
   logmissingdep("tracy" , "TRACY_ENABLE")
   FetchContent_Declare(
     tracy
     GIT_REPOSITORY https://github.com/wolfpld/tracy.git
-    GIT_TAG v0.10
+    GIT_TAG v0.11.1
     GIT_SHALLOW TRUE
     GIT_PROGRESS TRUE
     EXCLUDE_FROM_ALL
@@ -170,8 +183,7 @@ if(TRACY_ENABLE)
   FetchContent_MakeAvailable(tracy)
 endif()
 
-# If we're supporting mesh I/O, we need assimp
-if(MANIFOLD_EXPORT)
+if(ASSIMP_ENABLE)
   find_package(assimp REQUIRED)
 endif()
 
@@ -187,6 +199,14 @@ if(MANIFOLD_PYBIND)
     # stubgen does not support version less than 3.11
     set(MANIFOLD_PYBIND_STUBGEN OFF)
     message("Python version too old, stub will not be generated")
+  endif()
+
+  if(
+    CMAKE_CXX_FLAGS MATCHES "-fsanitize=address"
+    OR CMAKE_EXE_LINKER_FLAGS MATCHES "-fsanitize=address"
+  )
+    set(MANIFOLD_PYBIND_STUBGEN OFF)
+    message("AddressSanitizer detected, Python stub generation disabled")
   endif()
 
   if(NOT MANIFOLD_USE_BUILTIN_NANOBIND)
@@ -211,13 +231,12 @@ if(MANIFOLD_PYBIND)
     FetchContent_Declare(
       nanobind
       GIT_REPOSITORY https://github.com/wjakob/nanobind.git
-      GIT_TAG
-        784efa2a0358a4dc5432c74f5685ee026e20f2b6 # v2.2.0
+      GIT_TAG v2.12.0
       GIT_PROGRESS TRUE
       EXCLUDE_FROM_ALL
     )
     FetchContent_MakeAvailable(nanobind)
-    set(NB_VERSION 2.2.0)
+    set(NB_VERSION 2.12.0)
   endif()
 
   if(NB_VERSION VERSION_LESS 2.1.0)
@@ -238,7 +257,7 @@ if(MANIFOLD_TEST)
     FetchContent_Declare(
       googletest
       GIT_REPOSITORY https://github.com/google/googletest.git
-      GIT_TAG v1.14.0
+      GIT_TAG v1.17.0
       GIT_SHALLOW TRUE
       GIT_PROGRESS TRUE
       FIND_PACKAGE_ARGS NAMES GTest gtest
@@ -256,10 +275,45 @@ if(MANIFOLD_FUZZ)
   FetchContent_Declare(
     fuzztest
     GIT_REPOSITORY https://github.com/google/fuzztest.git
-    GIT_TAG 2606e04a43e5a7730e437a849604a61f1cb0ff28
+    GIT_TAG f1e26613f66997aa09d3026762e275de22b2daae
     GIT_PROGRESS TRUE
   )
   FetchContent_MakeAvailable(fuzztest)
 endif()
+
+set(BUILD_SHARED_LIBS ${OLD_BUILD_SHARED_LIBS})
+
+set(BUILD_SHARED_LIBS OFF)
+message(STATUS "Fetching TextToPolygon")
+FetchContent_Declare(
+  TextToPolygon
+  GIT_REPOSITORY https://github.com/SovereignShop/text-to-polygon.git
+  GIT_TAG 17620d97b823e4b283e40aba93dfcba3e43beae3
+)
+FetchContent_MakeAvailable(TextToPolygon)
+
+# The pinned dependency uses GCC-only floating-point `d` suffixes. Generate
+# a portable translation unit without modifying downloaded source trees.
+if(EMSCRIPTEN)
+  set(TEXT_POLYGON_SOURCE "${texttopolygon_SOURCE_DIR}/src/text_to_polygon.cpp")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${TEXT_POLYGON_SOURCE}")
+  file(READ "${TEXT_POLYGON_SOURCE}" TEXT_POLYGON_CODE)
+  string(REGEX REPLACE "([0-9]+\\.[0-9]+)d" "\\1" TEXT_POLYGON_CODE "${TEXT_POLYGON_CODE}")
+  string(REPLACE "u_int32_t" "uint32_t" TEXT_POLYGON_CODE "${TEXT_POLYGON_CODE}")
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/text_to_polygon_portable.cpp" "${TEXT_POLYGON_CODE}")
+  file(READ "${texttopolygon_SOURCE_DIR}/include/text_to_polygon.h" TEXT_POLYGON_HEADER)
+  string(REPLACE "u_int32_t" "uint32_t" TEXT_POLYGON_HEADER "${TEXT_POLYGON_HEADER}")
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/text_to_polygon.h" "${TEXT_POLYGON_HEADER}")
+  target_include_directories(TextToPolygon BEFORE PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>")
+  # This library also ships an example main(); it must not run on WASM startup.
+  target_compile_definitions(TextToPolygon PRIVATE main=TextToPolygonExampleMain)
+  set_property(TARGET TextToPolygon PROPERTY SOURCES
+    "${CMAKE_CURRENT_BINARY_DIR}/text_to_polygon_portable.cpp")
+endif()
+
+target_link_libraries(TextToPolygon
+    PRIVATE
+    freetype
+)
 
 set(BUILD_SHARED_LIBS ${OLD_BUILD_SHARED_LIBS})

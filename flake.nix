@@ -1,88 +1,31 @@
 {
   inputs.flake-utils.url = "github:numtide/flake-utils";
   inputs.nixpkgs.url = "nixpkgs/nixos-unstable";
-  inputs.gtest-src = {
-    url = "github:google/googletest/v1.14.0";
-    flake = false;
-  };
   inputs.clipper2-src = {
     url = "github:AngusJohnson/Clipper2";
-    flake = false;
-  };
-  inputs.onetbb-src = {
-    url = "github:oneapi-src/oneTBB/v2022.0.0";
-    flake = false;
-  };
-  inputs.gersemi-src = {
-    url = "github:BlankSpruce/gersemi/0.17.0";
     flake = false;
   };
   outputs =
     { self
     , nixpkgs
     , flake-utils
-    , gtest-src
     , clipper2-src
-    , onetbb-src
-    , gersemi-src
     }:
     flake-utils.lib.eachDefaultSystem
       (system:
       let
-        manifold-version = "3.0.0";
+        manifold-version = "3.5.3";
         pkgs = import nixpkgs {
           inherit system;
           overlays = [
             (final: prev: {
-              clipper2 = prev.clipper2.overrideAttrs (_: {
+              clipper2 = prev.clipper2.overrideAttrs (_: rec {
                 version = clipper2-src.rev;
                 src = clipper2-src;
+                sourceRoot = "source/CPP";
               });
-              # https://github.com/NixOS/nixpkgs/pull/343743#issuecomment-2424163602
-              binaryen =
-                let
-                  testsuite = final.fetchFromGitHub {
-                    owner = "WebAssembly";
-                    repo = "testsuite";
-                    rev = "e05365077e13a1d86ffe77acfb1a835b7aa78422";
-                    hash = "sha256-yvZ5AZTPUA6nsD3xpFC0VLthiu2CxVto66RTXBXXeJM=";
-                  };
-                in
-                prev.binaryen.overrideAttrs (_: rec {
-                  version = "119";
-                  src = pkgs.fetchFromGitHub {
-                    owner = "WebAssembly";
-                    repo = "binaryen";
-                    rev = "version_${version}";
-                    hash = "sha256-JYXtN3CW4qm/nnjGRvv3GxQ0x9O9wHtNYQLqHIYTTOA=";
-                  };
-                  preConfigure = ''
-                    if [ $doCheck -eq 1 ]; then
-                      sed -i '/googletest/d' third_party/CMakeLists.txt
-                      rmdir test/spec/testsuite
-                      ln -s ${testsuite} test/spec/testsuite
-                    else
-                      cmakeFlagsArray=($cmakeFlagsArray -DBUILD_TESTS=0)
-                    fi
-                  '';
-                });
             })
           ];
-        };
-        onetbb = pkgs.tbb_2021_11.overrideAttrs (_: {
-          version = onetbb-src.rev;
-          src = onetbb-src;
-        });
-        gersemi = with pkgs.python3Packages; buildPythonPackage {
-          pname = "gersemi";
-          version = "0.17.0";
-          src = gersemi-src;
-          propagatedBuildInputs = [
-            appdirs
-            lark
-            pyyaml
-          ];
-          doCheck = true;
         };
         manifold =
           { parallel ? true }: pkgs.stdenv.mkDerivation {
@@ -95,17 +38,17 @@
               (python3.withPackages
                 (ps: with ps; [ nanobind trimesh pytest ]))
               gtest
-            ]) ++ (if parallel then [ onetbb ] else [ ]);
+            ]) ++ (if parallel then [ pkgs.onetbb ] else [ ]);
             buildInputs = with pkgs; [
               clipper2
-              assimp
             ];
             cmakeFlags = [
+              "-DMANIFOLD_STRICT=ON"
               "-DMANIFOLD_CBIND=ON"
-              "-DMANIFOLD_EXPORT=ON"
               "-DBUILD_SHARED_LIBS=ON"
               "-DMANIFOLD_PAR=${if parallel then "ON" else "OFF"}"
             ];
+            doCheck = true;
             checkPhase = ''
               cd test
               ./manifold_test
@@ -116,7 +59,7 @@
           name = "manifold-js";
           version = manifold-version;
           src = self;
-          nativeBuildInputs = (with pkgs; [ cmake python39 ]);
+          nativeBuildInputs = (with pkgs; [ cmake python3 ]);
           buildInputs = [ pkgs.nodejs ];
           configurePhase = ''
             cp -r ${clipper2-src} clipper2
@@ -126,9 +69,11 @@
             mkdir build
             cd build
             emcmake cmake -DCMAKE_BUILD_TYPE=MinSizeRel \
+            -DMANIFOLD_STRICT=ON \
             -DMANIFOLD_PAR=${if parallel then "ON" else "OFF"} \
-            -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=${gtest-src} \
-            -DFETCHCONTENT_SOURCE_DIR_TBB=${onetbb-src} \
+            -DMANIFOLD_USE_BUILTIN_TBB=${if parallel then "ON" else "OFF"} \
+            -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=${pkgs.gtest.src} \
+            -DFETCHCONTENT_SOURCE_DIR_TBB=${pkgs.onetbb.src} \
             -DFETCHCONTENT_SOURCE_DIR_CLIPPER2=../clipper2 ..
           '';
           buildPhase = ''
@@ -162,7 +107,7 @@
             version = manifold-version;
             src = self;
             propagatedBuildInputs = [ numpy ];
-            buildInputs = [ onetbb pkgs.clipper2 ];
+            buildInputs = with pkgs; [ clipper2 onetbb ];
             nativeBuildInputs = with pkgs; [
               cmake
               ninja
@@ -190,10 +135,13 @@
               pytest
 
               # formatting tools
-              gersemi
               black
+
+              # misc
+              matplotlib
             ]))
 
+            gersemi
             ninja
             cmake
             onetbb
@@ -203,10 +151,11 @@
             pkg-config
 
             # useful tools
-            clang-tools_18
             clang_18
+            llvmPackages_18.clang-tools
             llvmPackages_18.bintools
             tracy
+            f3d
           ];
         };
       }

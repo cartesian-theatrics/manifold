@@ -13,15 +13,10 @@
 // limitations under the License.
 
 #pragma once
-#include <ostream>
 
 #include "gtest/gtest.h"
 #include "manifold/common.h"
 #include "manifold/manifold.h"
-
-#ifdef MANIFOLD_EXPORT
-#include "manifold/meshIO.h"
-#endif
 
 using namespace manifold;
 
@@ -36,6 +31,12 @@ struct MeshSize {
   int numVert, numTri;
   int numProp = 0;
   int numPropVert = numVert;
+};
+
+struct ManifoldParamGuard {
+  manifold::ExecutionParams params;
+  ManifoldParamGuard() { params = ManifoldParams(); }
+  ~ManifoldParamGuard() { ManifoldParams() = params; }
 };
 
 Polygons SquareHole(double xOffset = 0.0);
@@ -55,7 +56,8 @@ void ExpectMeshes(const Manifold& manifold,
                   const std::vector<MeshSize>& meshSize);
 void CheckStrictly(const Manifold& manifold);
 void CheckGL(const Manifold& manifold, bool noMerge = true);
-#ifdef MANIFOLD_EXPORT
-Manifold ReadMesh(const std::string& filename);
-#endif
+void CheckGLEquiv(const MeshGL& mgl1, const MeshGL& mgl2);
+Manifold ReadTestOBJ(const std::string& filename);
+MeshGL64 ReadTestMeshGL64OBJ(const std::string& filename);
+void WriteTestOBJ(const std::string& filename, Manifold m);
 void RegisterPolygonTests();
